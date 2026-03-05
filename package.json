@@ -1,0 +1,33 @@
+{
+	"name": "trove-backend",
+	"version": "1.0.0",
+	"description": "This is a cloude file storage web application",
+	"main": "server.js",
+	"type": "module",
+	"scripts": {
+		"dev": "node --watch server.js",
+		"start": "node server.js"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/SrjAdhikari/trove-backend.git"
+	},
+	"keywords": [
+		"RESTAPIs",
+		"node.js",
+		"express"
+	],
+	"author": "surajadhikari055@gmail.com",
+	"license": "MIT",
+	"bugs": {
+		"url": "https://github.com/SrjAdhikari/trove-backend/issues"
+	},
+	"homepage": "https://github.com/SrjAdhikari/trove-backend#readme",
+	"dependencies": {
+		"cookie-parser": "^1.4.7",
+		"cors": "^2.8.6",
+		"dotenv": "^17.3.1",
+		"express": "^5.2.1",
+		"mongoose": "^9.2.4"
+	}
+}
