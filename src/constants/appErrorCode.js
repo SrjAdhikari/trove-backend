@@ -1,0 +1,35 @@
+//* src/constants/appErrorCode.js
+
+/**
+ * Centralized application error codes.
+ *
+ * @readonly
+ * @enum {string}
+ */
+const appErrorCode = Object.freeze({
+	// Authentication
+	UNAUTHORIZED: "UNAUTHORIZED",
+	INVALID_TOKEN: "INVALID_TOKEN",
+	TOKEN_EXPIRED: "TOKEN_EXPIRED",
+	INVALID_CREDENTIALS: "INVALID_CREDENTIALS",
+
+	// User
+	USER_NOT_FOUND: "USER_NOT_FOUND",
+	USER_ALREADY_EXISTS: "USER_ALREADY_EXISTS",
+	ACCESS_DENIED: "ACCESS_DENIED",
+
+	// File
+	FILE_NOT_FOUND: "FILE_NOT_FOUND",
+	FILE_RENAME_FAILED: "FILE_RENAME_FAILED",
+	FILE_DELETE_FAILED: "FILE_DELETE_FAILED",
+
+	// Directory
+	DIRECTORY_NOT_FOUND: "DIRECTORY_NOT_FOUND",
+	DIRECTORY_RENAME_FAILED: "DIRECTORY_RENAME_FAILED",
+	DIRECTORY_DELETE_FAILED: "DIRECTORY_DELETE_FAILED",
+
+	// Validation
+	INVALID_ID: "INVALID_ID",
+});
+
+export default appErrorCode;
