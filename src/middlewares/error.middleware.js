@@ -2,39 +2,75 @@
 
 import AppError from "../errors/AppError.js";
 import envConfig from "../constants/env.js";
+import httpStatus from "../constants/httpStatus.js";
+import appErrorCode from "../constants/appErrorCode.js";
 
 const { NODE_ENV } = envConfig;
+const {
+	BAD_REQUEST,
+	UNPROCESSABLE_ENTITY,
+	UNAUTHORIZED,
+	CONFLICT,
+	INTERNAL_SERVER_ERROR,
+} = httpStatus;
+const {
+	INVALID_ID,
+	VALIDATION_ERROR,
+	INVALID_TOKEN,
+	TOKEN_EXPIRED,
+	DUPLICATE_FIELD,
+	INTERNAL_ERROR,
+} = appErrorCode;
 
+/**
+ * Maps known error names to structured AppError instances.
+ * @type {Object.<string, function(Error): AppError>}
+ */
 const errorsByName = {
 	CastError: (err) =>
-		new AppError(`Invalid ${err.path}: ${err.value}`, 400, "INVALID_ID"),
+		new AppError(`Invalid ${err.path}: ${err.value}`, BAD_REQUEST, INVALID_ID),
 
 	ValidationError: (err) => {
 		const message = Object.values(err.errors)
 			.map((e) => e.message)
 			.join(", ");
-		return new AppError(message, 422, "VALIDATION_ERROR");
+		return new AppError(message, UNPROCESSABLE_ENTITY, VALIDATION_ERROR);
 	},
 
 	JsonWebTokenError: () =>
-		new AppError("Invalid authentication token", 401, "INVALID_TOKEN"),
+		new AppError("Invalid authentication token", UNAUTHORIZED, INVALID_TOKEN),
 
 	TokenExpiredError: () =>
 		new AppError(
 			"Your session has expired. Please log in again.",
-			401,
-			"TOKEN_EXPIRED",
+			UNAUTHORIZED,
+			TOKEN_EXPIRED,
 		),
 };
 
+/**
+ * Maps known MongoDB error codes to structured AppError instances.
+ * @type {Object.<number, function(Error): AppError>}
+ */
 const errorsByCode = {
 	11000: (err) => {
 		const field = Object.keys(err.keyValue)[0];
-		return new AppError(`${field} already exists`, 409, "DUPLICATE_FIELD");
+		return new AppError(`${field} already exists`, CONFLICT, DUPLICATE_FIELD);
 	},
-	121: (err) => new AppError(err.message, 400, "VALIDATION_ERROR"),
+	121: (err) => new AppError(err.message, BAD_REQUEST, VALIDATION_ERROR),
 };
 
+/**
+ * Global error handling middleware for Express 5.
+ * 
+ * Converts known errors into structured AppError responses.
+ * Must be registered after all routes and other middleware in the Express app.
+ *
+ * @param {Error} err - The thrown or rejected error.
+ * @param {import('express').Request} req - Express request object.
+ * @param {import('express').Response} res - Express response object.
+ * @param {import('express').NextFunction} next - Express next function.
+ */
 const globalErrorHandler = (err, req, res, next) => {
 	let error;
 
@@ -46,11 +82,15 @@ const globalErrorHandler = (err, req, res, next) => {
 		error = err;
 	} else {
 		console.error(`[GLOBAL ERROR HANDLER] UNEXPECTED ERROR:`, err);
-		error = new AppError("Something went wrong", 500, "INTERNAL_ERROR");
+		error = new AppError(
+			"Something went wrong",
+			INTERNAL_SERVER_ERROR,
+			INTERNAL_ERROR,
+		);
 		error.isOperational = false;
 	}
 
-	const statusCode = error.statusCode || 500;
+	const statusCode = error.statusCode || INTERNAL_SERVER_ERROR;
 	const status =
 		error.statusCode >= 400 && error.statusCode < 500 ? "fail" : "error";
 
