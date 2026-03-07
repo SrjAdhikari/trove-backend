@@ -30,6 +30,11 @@ const appErrorCode = Object.freeze({
 
 	// Validation
 	INVALID_ID: "INVALID_ID",
+	VALIDATION_ERROR: "VALIDATION_ERROR",
+	DUPLICATE_FIELD: "DUPLICATE_FIELD",
+
+	// General
+	INTERNAL_ERROR: "INTERNAL_ERROR",
 });
 
 export default appErrorCode;
