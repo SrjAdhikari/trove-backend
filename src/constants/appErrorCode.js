@@ -34,6 +34,7 @@ const appErrorCode = Object.freeze({
 	DUPLICATE_FIELD: "DUPLICATE_FIELD",
 
 	// General
+	ROUTE_NOT_FOUND: "ROUTE_NOT_FOUND",
 	INTERNAL_ERROR: "INTERNAL_ERROR",
 });
 
