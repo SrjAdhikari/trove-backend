@@ -11,6 +11,8 @@ import appErrorCode from "./constants/appErrorCode.js";
 import AppError from "./errors/AppError.js";
 import globalErrorHandler from "./middlewares/error.middleware.js";
 
+import routes from "./routes/index.js";
+
 const { APP_ORIGIN, NODE_ENV } = envConfig;
 const { OK, NOT_FOUND } = httpStatus;
 const { ROUTE_NOT_FOUND } = appErrorCode;
@@ -63,6 +65,11 @@ app.get("/", (req, res) => {
 		message: "Welcome to the Trove API",
 	});
 });
+
+//* ==============================
+//* API ROUTES
+//* ==============================
+app.use("/api", routes);
 
 //* ==============================
 //* 404 + GLOBAL ERROR HANDLER
