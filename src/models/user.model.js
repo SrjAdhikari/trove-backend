@@ -30,7 +30,22 @@ const userSchema = new Schema(
 		rootDirId: {
 			type: Schema.Types.ObjectId,
 			ref: "Directory",
-			required: true,
+		},
+		otp: {
+			type: String,
+			select: false,
+		},
+		otpExpiresAt: {
+			type: Date,
+			select: false,
+		},
+		isVerified: {
+			type: Boolean,
+			default: false,
+		},
+		verificationExpiresAt: {
+			type: Date,
+			select: false,
 		},
 	},
 	{
@@ -38,6 +53,8 @@ const userSchema = new Schema(
 		timestamps: true,
 	},
 );
+
+userSchema.index({ verificationExpiresAt: 1 }, { expireAfterSeconds: 0 });
 
 // Encrypt password before saving to database
 userSchema.pre("save", async function (next) {
@@ -52,8 +69,8 @@ userSchema.pre("save", async function (next) {
 });
 
 // Compare incoming user password with hashed password
-userSchema.methods.comparePassword = async function (userPassword) {
-	return await bcrypt.compare(userPassword, this.password);
+userSchema.methods.comparePassword = function (userPassword) {
+	return bcrypt.compare(userPassword, this.password);
 };
 
 const User = model("User", userSchema);
