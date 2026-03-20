@@ -7,29 +7,43 @@
 
 import { Router } from "express";
 import {
-	loginUser,
-	logoutUser,
-	registerUser,
+	registerHandler,
+	verifyOTPHandler,
+	resendOTPHandler,
+	loginHandler,
+	logoutHandler,
 } from "../controllers/auth.controller.js";
 
 const authRouter = Router();
 
 /**
- * Register a new user
+ * Register a new user — sends OTP to email
  * @route POST /api/auth/register
  */
-authRouter.post("/register", registerUser);
+authRouter.post("/register", registerHandler);
+
+/**
+ * Verify OTP and create user account
+ * @route POST /api/auth/register/verify-otp
+ */
+authRouter.post("/register/verify-otp", verifyOTPHandler);
+
+/**
+ * Resend registration OTP
+ * @route POST /api/auth/register/resend-otp
+ */
+authRouter.post("/register/resend-otp", resendOTPHandler);
 
 /**
  * Login a user
  * @route POST /api/auth/login
  */
-authRouter.post("/login", loginUser);
+authRouter.post("/login", loginHandler);
 
 /**
  * Logout a user
  * @route POST /api/auth/logout
  */
-authRouter.post("/logout", logoutUser);
+authRouter.post("/logout", logoutHandler);
 
 export default authRouter;
