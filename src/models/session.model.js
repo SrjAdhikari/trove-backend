@@ -16,7 +16,7 @@ const sessionSchema = new Schema(
 			ipAddress: String,
 			deviceType: String,
 			browser: String,
-			location: String,
+			deviceOS: String,
 		},
 		createdAt: {
 			type: Date,
