@@ -1,9 +1,16 @@
 //* src/controllers/auth.controller.js
 
+import UAParser from "ua-parser-js";
 import AppError from "../errors/AppError.js";
 import httpStatus from "../constants/httpStatus.js";
 import appErrorCode from "../constants/appErrorCode.js";
-import { createUser, verifyOTP, resendOTP } from "../services/auth.service.js";
+import {
+	createUser,
+	verifyOTP,
+	resendOTP,
+	loginUser,
+} from "../services/auth.service.js";
+import { setAuthCookie } from "../utils/cookies.js";
 
 const { BAD_REQUEST, CREATED, OK } = httpStatus;
 const { ALL_FIELDS_REQUIRED, EMAIL_REQUIRED } = appErrorCode;
@@ -60,7 +67,45 @@ const resendOTPHandler = async (req, res) => {
 	});
 };
 
-const loginHandler = async (req, res) => {};
+const loginHandler = async (req, res) => {
+	const { email, password } = req.body;
+	if (!email || !password) {
+		throw new AppError(
+			"All fields are required",
+			BAD_REQUEST,
+			ALL_FIELDS_REQUIRED,
+		);
+	}
+
+	// Extract raw headers for device info
+	const userAgent = req.headers["user-agent"] || "";
+	const ipAddress =
+		req.headers["x-forwarded-for"] || req.socket?.remoteAddress || "Unknown";
+
+	// Parse User-Agent string
+	const parser = new UAParser(userAgent);
+	const parsedUA = parser.getResult();
+
+	// Structure device metadata for the Mongo Session Model
+	const deviceInfo = {
+		userAgent,
+		ipAddress,
+		deviceType: parsedUA.device.type || "desktop",
+		browser:
+			`${parsedUA.browser.name || "Unknown"} ${parsedUA.browser.version || ""}`.trim(),
+		deviceOS:
+			`${parsedUA.os.name || "Unknown"} ${parsedUA.os.version || ""}`.trim(),
+	};
+
+	const session = await loginUser(email, password, deviceInfo);
+
+	setAuthCookie(res, session._id);
+
+	res.status(OK).json({
+		success: true,
+		message: "User logged in successfully",
+	});
+};
 
 const logoutHandler = async (req, res) => {};
 
