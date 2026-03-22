@@ -3,12 +3,14 @@
 import mongoose from "mongoose";
 
 import User from "../models/user.model.js";
+import Session from "../models/session.model.js";
 import Directory from "../models/directory.model.js";
 
 import AppError from "../errors/AppError.js";
 
 import httpStatus from "../constants/httpStatus.js";
 import appErrorCode from "../constants/appErrorCode.js";
+import envConfig from "../constants/env.js";
 
 import {
 	ONE_MINUTE_MS,
@@ -23,7 +25,8 @@ import {
 	isOTPCooldownActive,
 } from "./otp.service.js";
 
-const { CONFLICT, NOT_FOUND, BAD_REQUEST, TOO_MANY_REQUESTS } = httpStatus;
+const { CONFLICT, NOT_FOUND, BAD_REQUEST, UNAUTHORIZED, TOO_MANY_REQUESTS } =
+	httpStatus;
 
 const {
 	USER_ALREADY_EXISTS,
@@ -31,7 +34,11 @@ const {
 	INVALID_OTP,
 	OTP_EXPIRED,
 	OTP_COOLDOWN,
+	INVALID_CREDENTIALS,
+	USER_NOT_VERIFIED,
 } = appErrorCode;
+
+const { MAX_ALLOWED_DEVICES } = envConfig;
 
 /**
  * Resolves user registration including unverified user re-registration edge-cases.
@@ -167,4 +174,63 @@ const resendOTP = async (email) => {
 	await sendOTP(user.name, email, plainOTP);
 };
 
-export { createUser, verifyOTP, resendOTP };
+/**
+ * Unlocks an account by verifying passwords and creating a secure session.
+ * Tracks active devices to enforce concurrency limits.
+ *
+ * @param {string} email - The user's email
+ * @param {string} password - The raw password attempt
+ * @param {Object} deviceInfo - Rich parsed metrics about the requester's device
+ * @returns {Promise<Object>} The generated session document
+ * @throws {AppError} If credentials fail or the user is unverified
+ */
+const loginUser = async (email, password, deviceInfo) => {
+	const user = await User.findOne({ email }).select("+password");
+
+	if (!user) {
+		throw new AppError(
+			"Invalid credentials",
+			UNAUTHORIZED,
+			INVALID_CREDENTIALS,
+		);
+	}
+
+	if (!user.isVerified) {
+		throw new AppError(
+			"Please verify your email first",
+			BAD_REQUEST,
+			USER_NOT_VERIFIED,
+		);
+	}
+
+	const isPasswordValid = await user.comparePassword(password);
+
+	if (!isPasswordValid) {
+		throw new AppError(
+			"Invalid credentials",
+			UNAUTHORIZED,
+			INVALID_CREDENTIALS,
+		);
+	}
+
+	const activeSessionCount = await Session.countDocuments({
+		userId: user._id,
+	});
+
+	// Maintain the MAX_ALLOWED_DEVICES limit by silently ejecting their oldest browser session.
+	if (activeSessionCount >= MAX_ALLOWED_DEVICES) {
+		await Session.findOneAndDelete(
+			{ userId: user._id },
+			{ sort: { createdAt: 1 } },
+		);
+	}
+
+	const session = await Session.create({
+		userId: user._id,
+		deviceInfo,
+	});
+
+	return session;
+};
+
+export { createUser, verifyOTP, resendOTP, loginUser };
