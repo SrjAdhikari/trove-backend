@@ -12,6 +12,7 @@ import {
 	resendOTPHandler,
 	loginHandler,
 	logoutHandler,
+	logoutAllHandler,
 } from "../controllers/auth.controller.js";
 
 const authRouter = Router();
@@ -45,5 +46,11 @@ authRouter.post("/login", loginHandler);
  * @route POST /api/auth/logout
  */
 authRouter.post("/logout", logoutHandler);
+
+/**
+ * Logout a user from all devices
+ * @route POST /api/auth/logout-all
+ */
+authRouter.post("/logout-all", logoutAllHandler);
 
 export default authRouter;
