@@ -2,15 +2,19 @@
 
 import UAParser from "ua-parser-js";
 import AppError from "../errors/AppError.js";
+
 import httpStatus from "../constants/httpStatus.js";
 import appErrorCode from "../constants/appErrorCode.js";
+
 import {
 	createUser,
 	verifyOTP,
 	resendOTP,
 	loginUser,
+	logoutUser,
+	logoutAllUser,
 } from "../services/auth.service.js";
-import { setAuthCookie } from "../utils/cookies.js";
+import { setAuthCookie, clearAuthCookie } from "../utils/cookies.js";
 
 const { BAD_REQUEST, CREATED, OK } = httpStatus;
 const { ALL_FIELDS_REQUIRED, EMAIL_REQUIRED } = appErrorCode;
@@ -107,7 +111,23 @@ const loginHandler = async (req, res) => {
 	});
 };
 
-const logoutHandler = async (req, res) => {};
+const logoutHandler = async (req, res) => {
+	const sessionId = req.signedCookies.token;
+
+	await logoutUser(sessionId);
+	clearAuthCookie(res);
+
+	res.status(OK).json({ success: true, message: "Logged out successfully" });
+};
+
+const logoutAllHandler = async (req, res) => {
+	const userId = req.user._id;
+
+	await logoutAllUser(userId);
+	clearAuthCookie(res);
+
+	res.status(OK).json({ success: true, message: "Logged out of all devices successfully" });
+};
 
 export {
 	registerHandler,
@@ -115,4 +135,5 @@ export {
 	resendOTPHandler,
 	loginHandler,
 	logoutHandler,
+	logoutAllHandler,
 };
