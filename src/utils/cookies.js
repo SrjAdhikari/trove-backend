@@ -16,7 +16,12 @@ const setAuthCookie = (res, sessionId) => {
 };
 
 const clearAuthCookie = (res) => {
-	res.clearCookie("token");
+	res.clearCookie("token", {
+		httpOnly: true,
+		signed: true,
+		sameSite: "lax",
+		secure: NODE_ENV === "production",
+	});
 };
 
 export { setAuthCookie, clearAuthCookie };
