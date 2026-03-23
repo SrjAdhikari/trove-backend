@@ -13,7 +13,7 @@ import globalErrorHandler from "./middlewares/error.middleware.js";
 
 import routes from "./routes/index.js";
 
-const { APP_ORIGIN, NODE_ENV } = envConfig;
+const { APP_ORIGIN, NODE_ENV, COOKIE_SECRET } = envConfig;
 const { OK, NOT_FOUND } = httpStatus;
 const { ROUTE_NOT_FOUND } = appErrorCode;
 
@@ -32,7 +32,7 @@ app.use(
 );
 
 app.use(express.json({ limit: "1mb" }));
-app.use(cookieParser());
+app.use(cookieParser(COOKIE_SECRET));
 
 //* ==============================
 //* REQUEST LOGGER
