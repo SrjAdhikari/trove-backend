@@ -233,4 +233,35 @@ const loginUser = async (email, password, deviceInfo) => {
 	return session;
 };
 
-export { createUser, verifyOTP, resendOTP, loginUser };
+/**
+ * Destroys a single specific session to log a user out of their current device.
+ *
+ * @param {string} sessionId - The specific session to delete
+ * @returns {Promise<void>}
+ */
+const logoutUser = async (sessionId) => {
+	if (sessionId) {
+		await Session.deleteOne({ _id: sessionId });
+	}
+};
+
+/**
+ * Destroys all active sessions for a user, forcing a global logout across all devices.
+ *
+ * @param {string} userId - The unique identifier of the user
+ * @returns {Promise<void>}
+ */
+const logoutAllUser = async (userId) => {
+	if (userId) {
+		await Session.deleteMany({ userId });
+	}
+};
+
+export {
+	createUser,
+	verifyOTP,
+	resendOTP,
+	loginUser,
+	logoutUser,
+	logoutAllUser,
+};
