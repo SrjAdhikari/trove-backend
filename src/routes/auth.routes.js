@@ -14,6 +14,7 @@ import {
 	logoutHandler,
 	logoutAllHandler,
 } from "../controllers/auth.controller.js";
+import authenticate from "../middlewares/auth.middleware.js";
 
 const authRouter = Router();
 
@@ -45,12 +46,12 @@ authRouter.post("/login", loginHandler);
  * Logout a user
  * @route POST /api/auth/logout
  */
-authRouter.post("/logout", logoutHandler);
+authRouter.post("/logout", authenticate, logoutHandler);
 
 /**
  * Logout a user from all devices
  * @route POST /api/auth/logout-all
  */
-authRouter.post("/logout-all", logoutAllHandler);
+authRouter.post("/logout-all", authenticate, logoutAllHandler);
 
 export default authRouter;
