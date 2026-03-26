@@ -1,7 +1,7 @@
 {
 	"name": "trove-backend",
 	"version": "1.0.0",
-	"description": "This is a cloude file storage web application",
+	"description": "Backend REST API for TroveCloud — a secure cloud file storage and management platform",
 	"main": "server.js",
 	"type": "module",
 	"scripts": {
@@ -13,9 +13,12 @@
 		"url": "git+https://github.com/SrjAdhikari/trove-backend.git"
 	},
 	"keywords": [
-		"RESTAPIs",
+		"cloud-storage",
+		"file-management",
+		"rest-api",
 		"node.js",
-		"express"
+		"express",
+		"mongodb"
 	],
 	"author": "surajadhikari055@gmail.com",
 	"license": "MIT",
@@ -29,6 +32,8 @@
 		"cors": "^2.8.6",
 		"dotenv": "^17.3.1",
 		"express": "^5.2.1",
-		"mongoose": "^9.2.4"
+		"mongoose": "^9.2.4",
+		"resend": "^6.9.4",
+		"ua-parser-js": "^2.0.9"
 	}
 }
