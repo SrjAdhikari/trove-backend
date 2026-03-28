@@ -3,7 +3,7 @@
 const userSchema = {
 	$jsonSchema: {
 		bsonType: "object",
-		required: ["_id", "name", "email", "password", "rootDirId"],
+		required: ["_id", "name", "email", "password"],
 		properties: {
 			_id: {
 				bsonType: "objectId",
@@ -30,6 +30,18 @@ const userSchema = {
 				bsonType: "objectId",
 				description: "rootDirId must be a valid ObjectId",
 			},
+			otp: {
+				bsonType: "string",
+			},
+			otpExpiresAt: {
+				bsonType: "date",
+			},
+			isVerified: {
+				bsonType: "bool",
+			},
+			verificationExpiresAt: {
+				bsonType: "date",
+			},
 			createdAt: {
 				bsonType: "date",
 			},
@@ -37,7 +49,7 @@ const userSchema = {
 				bsonType: "date",
 			},
 			__v: {
-				bsonType: "number",
+				bsonType: "int",
 			},
 		},
 		additionalProperties: false,
