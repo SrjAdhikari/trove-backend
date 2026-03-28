@@ -1,6 +1,6 @@
 //* src/controllers/auth.controller.js
 
-import UAParser from "ua-parser-js";
+import { UAParser } from "ua-parser-js";
 import AppError from "../errors/AppError.js";
 
 import httpStatus from "../constants/httpStatus.js";
