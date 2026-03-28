@@ -57,15 +57,11 @@ const userSchema = new Schema(
 userSchema.index({ verificationExpiresAt: 1 }, { expireAfterSeconds: 0 });
 
 // Encrypt password before saving to database
-userSchema.pre("save", async function (next) {
-	if (!this.isModified("password")) {
-		return next();
-	}
+userSchema.pre("save", async function () {
+	if (!this.isModified("password")) return;
 
 	const salt = await bcrypt.genSalt(10);
 	this.password = await bcrypt.hash(this.password, salt);
-
-	next();
 });
 
 // Compare incoming user password with hashed password
