@@ -18,10 +18,14 @@ const getEnv = (key) => {
 };
 
 const envConfig = Object.freeze({
+	PORT: getEnv("PORT"),
 	NODE_ENV: getEnv("NODE_ENV"),
-	PORT: Number(getEnv("PORT")),
 	APP_ORIGIN: getEnv("APP_ORIGIN"),
 	MONGODB_URI: getEnv("MONGODB_URI"),
+	COOKIE_SECRET: getEnv("COOKIE_SECRET"),
+	MAX_ALLOWED_DEVICES: getEnv("MAX_ALLOWED_DEVICES"),
+	RESEND_API_KEY: getEnv("RESEND_API_KEY"),
+	EMAIL_FROM: getEnv("EMAIL_FROM"),
 });
 
 export default envConfig;
