@@ -43,6 +43,7 @@ const appErrorCode = Object.freeze({
 	EMAIL_REQUIRED: "EMAIL_REQUIRED",
 	ROUTE_NOT_FOUND: "ROUTE_NOT_FOUND",
 	INTERNAL_ERROR: "INTERNAL_ERROR",
+	INVALID_INPUT: "INVALID_INPUT",
 });
 
 export default appErrorCode;
