@@ -9,7 +9,7 @@ The Directory update logic adheres to the Controller-Service pattern, with authe
 - **Authentication (`auth.middleware.js`)**: Applied router-wide via `directoryRouter.use(authenticate)`. Every directory endpoint requires a valid session — unauthenticated requests are rejected before reaching any controller.
 - **Middleware (`validateId.middleware.js`)**: Registered via `router.param()` on `id`. Validates MongoDB ObjectId format using `isValidObjectId`, throwing a `BAD_REQUEST` error before the request reaches the controller.
 - **Controller (`directory.controller.js`)**: Extracts route parameters and request body, performs input validation, delegates to the Service layer. Contains zero business logic or database access.
-- **Service (`directory.service.js`)**: Executes an atomic ownership-scoped update and returns the renamed directory.
+- **Service (`directory.service.js`)**: Verifies ownership, guards against root directory rename, and performs the update.
 
 ---
 
@@ -30,11 +30,13 @@ The Directory update logic adheres to the Controller-Service pattern, with authe
   6. Returns the updated directory document.
 
 - **Service Logic (`updateDirectory`):**
-  1. Uses `Directory.findOneAndUpdate({ _id: directoryId, userId }, { name: newDirName }, { new: true, runValidators: true })` — a single atomic operation that combines lookup, ownership check, and update.
-  2. `runValidators: true` ensures schema constraints (`minlength`, `maxlength`, `trim`) are enforced on the new name.
-  3. If no document matches (wrong ID or wrong owner), throws `AppError` with `NOT_FOUND` and `DIRECTORY_NOT_FOUND`.
-  4. `.lean()` returns a plain object for efficient serialization.
-  5. Returns the updated directory document.
+  1. Queries `Directory.findOne({ _id: directoryId, userId })` to fetch the directory with ownership verification.
+  2. If no document matches (wrong ID or wrong owner), throws `AppError` with `NOT_FOUND` and `DIRECTORY_NOT_FOUND`.
+  3. **Edge Case Handled:** If the directory has no `parentDirId` (i.e., it's the root directory), throws `AppError` with `BAD_REQUEST` and `DIRECTORY_RENAME_FAILED`. Root directories are permanent and cannot be renamed.
+  4. Uses `Directory.findOneAndUpdate({ _id: directoryId, userId }, { name: newDirName }, { new: true, runValidators: true })` to perform the rename.
+  5. `runValidators: true` ensures schema constraints (`minlength`, `maxlength`, `trim`) are enforced on the new name.
+  6. `.lean()` on both queries returns plain objects for efficient serialization.
+  7. Returns the updated directory document.
 
 - **Response:**
   ```json
@@ -56,17 +58,21 @@ The Directory update logic adheres to the Controller-Service pattern, with authe
 
 ## 🚀 Performance & Scalability Considerations
 
-### Atomic Update with `findOneAndUpdate`
+### Two-Step Read-Then-Update
 
-Uses a single `findOneAndUpdate` instead of `findOne` + manual `.save()`. This avoids two round-trips and eliminates race conditions where another request could modify the document between the read and the write.
+The service uses `findOne` followed by `findOneAndUpdate` instead of a single atomic operation. The extra query is necessary to check the root directory guard before performing the update. This adds one round-trip but keeps the guard explicit and consistent with the delete pattern.
 
 ---
 
 ## 🛡️ Security Mechanisms
 
-### Ownership-Scoped Update
+### Root Directory Rename Guard
 
-The `findOneAndUpdate` query includes `userId` in the filter. This ensures a user cannot rename another user's directory even if they know the ObjectId — the query simply returns `null` and the service throws `NOT_FOUND`.
+The service explicitly checks `!directory.parentDirId` before proceeding. Root directories (created during user registration, `parentDirId: null`) are permanent anchors of the user's file tree and cannot be renamed.
+
+### Ownership-Scoped Queries
+
+Both the `findOne` and `findOneAndUpdate` queries include `userId` in the filter. This ensures a user cannot rename another user's directory even if they know the ObjectId — the query returns `null` and the service throws `NOT_FOUND`.
 
 ### Schema Validation on Update
 

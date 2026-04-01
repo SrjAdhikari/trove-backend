@@ -10,8 +10,12 @@ import httpStatus from "../constants/httpStatus.js";
 import appErrorCode from "../constants/appErrorCode.js";
 
 const { NOT_FOUND, BAD_REQUEST } = httpStatus;
-const { DIRECTORY_NOT_FOUND, DIRECTORY_DELETE_FAILED, FILE_DELETE_FAILED } =
-	appErrorCode;
+const {
+	DIRECTORY_NOT_FOUND,
+	DIRECTORY_RENAME_FAILED,
+	DIRECTORY_DELETE_FAILED,
+	FILE_DELETE_FAILED,
+} = appErrorCode;
 const STORAGE_ROOT = path.resolve(import.meta.dirname, "../../storage");
 
 /**
@@ -88,17 +92,31 @@ const createDirectory = async (parentDirId, dirname, userId) => {
  * @throws {AppError} If the directory does not exist or the user does not own it
  */
 const updateDirectory = async (directoryId, newDirName, userId) => {
-	const directory = await Directory.findOneAndUpdate(
-		{ _id: directoryId, userId },
-		{ name: newDirName },
-		{ new: true, runValidators: true },
-	).lean();
+	const directory = await Directory.findOne({
+		_id: directoryId,
+		userId,
+	}).lean();
 
 	if (!directory) {
 		throw new AppError("Directory not found", NOT_FOUND, DIRECTORY_NOT_FOUND);
 	}
 
-	return directory;
+	// Prevent renaming of root directory
+	if (!directory.parentDirId) {
+		throw new AppError(
+			"Cannot rename root directory",
+			BAD_REQUEST,
+			DIRECTORY_RENAME_FAILED,
+		);
+	}
+
+	const updatedDirectory = await Directory.findOneAndUpdate(
+		{ _id: directoryId, userId },
+		{ name: newDirName },
+		{ new: true, runValidators: true },
+	).lean();
+
+	return updatedDirectory;
 };
 
 /**
