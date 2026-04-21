@@ -2,6 +2,8 @@
 
 This document outlines the architecture and execution logic for securely terminating active sessions across both single devices (standard logout) and globally across all authenticated devices (force disconnect).
 
+> **Provider-agnostic scope:** Both endpoints operate on the `Session` document, not on the user's identity provider. Sessions issued via email/password login and via Google OAuth are indistinguishable at this layer — the `token` cookie holds an opaque session ID regardless of how the session was originally issued.
+
 ---
 
 ## 🛣️ API Endpoints
@@ -34,7 +36,7 @@ This document outlines the architecture and execution logic for securely termina
 
 ### CSRF Protection (Strictly POST)
 
-Browsers are inherently susceptible to CSRF (Cross-Site Request Forgery) attacks where a malicious `<img src="https://api.trove.com/logout" />` tag could silently log a user out of their account simply by visiting a malicious blog.
+Browsers are inherently susceptible to CSRF (Cross-Site Request Forgery) attacks where a malicious `<img src="https://api.trovecloud.com/logout" />` tag could silently log a user out of their account simply by visiting a malicious blog.
 
 - Both logout actions are restricted natively to exactly HTTP **POST**.
 - Browsers do not execute HTTP `POST` requests blindly via `href` or `img-src` elements.

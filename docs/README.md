@@ -12,9 +12,10 @@ Please navigate to the specific domain you need below:
 
 ### 📂 [Authentication](./authentication)
 
-- [`registration-flow.md`](./authentication/registration-flow.md) - Detailed breakdown of User Registration and OTP sending/verification.
-- `login-and-sessions.md` - Overview of JWT issuance and session management
-- `password-reset.md` - Forget password logic
+- [`registration-flow.md`](./authentication/registration-flow.md) - User registration via email + OTP, plus the Google OAuth alternative path.
+- [`login-and-sessions.md`](./authentication/login-and-sessions.md) - Session issuance for email/password login, Google OAuth sign-in, the identity-provider model, and cookie-based session strategy.
+- [`logout-flow.md`](./authentication/logout-flow.md) - Single-device and global logout, provider-agnostic session destruction.
+- `password-reset.md` - Forget password logic _(not yet implemented)_.
 
 ### 📂 [API Documentation](./api)
 

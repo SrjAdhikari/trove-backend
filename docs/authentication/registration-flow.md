@@ -1,6 +1,6 @@
 # Authentication & OTP Verification Flow
 
-This document outlines the architecture, data flow, and edge cases handled by the Trove backend during the User Registration and OTP Verification process.
+This document outlines the architecture, data flow, and edge cases handled by the TroveCloud backend during the User Registration and OTP Verification process.
 
 ## 🏗️ Architecture
 
@@ -70,5 +70,17 @@ Sensitive fields like `password`, `otp`, `otpExpiresAt`, and `verificationExpire
 
 - **Why?** This ensures that accidentally returning `User.findOne()` in a generic future endpoint will _never_ leak the password or OTP to the frontend.
 - **How we override:** We use `.select('+otp')` internally within the `auth.service.js` only when we absolutely need to access them for verification.
+
+---
+
+## 🔀 Alternative: Google OAuth Registration
+
+An email + OTP signup is one of two registration paths. The other is `POST /api/auth/google` — a first-time call with a valid Google ID token implicitly registers the user, skipping the entire OTP flow.
+
+- No `password` is stored; `provider` is set to `"google"`; `isVerified: true` is assigned from the start (Google has already verified the email, enforced via the `email_verified` check).
+- The User document and their root `Directory` are created atomically in one MongoDB transaction, and a session cookie is issued in the same response.
+- Subsequent `POST /api/auth/google` calls with the same email are logins, not registrations, and cannot accidentally collide with a password-based account for that email (see the `PROVIDER_MISMATCH` guard).
+
+See [`login-and-sessions.md`](./login-and-sessions.md) for the full Google OAuth flow and the identity-provider model.
 
 ---
