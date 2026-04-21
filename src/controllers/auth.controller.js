@@ -126,7 +126,17 @@ const logoutAllHandler = async (req, res) => {
 	await logoutAllUser(userId);
 	clearAuthCookie(res);
 
-	res.status(OK).json({ success: true, message: "Logged out of all devices successfully" });
+	res
+		.status(OK)
+		.json({ success: true, message: "Logged out of all devices successfully" });
+};
+
+const getCurrentUserHandler = async (req, res) => {
+	res.status(OK).json({
+		success: true,
+		message: "User fetched successfully",
+		data: req.user,
+	});
 };
 
 export {
@@ -136,4 +146,5 @@ export {
 	loginHandler,
 	logoutHandler,
 	logoutAllHandler,
+	getCurrentUserHandler,
 };

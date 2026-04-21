@@ -13,6 +13,7 @@ import {
 	loginHandler,
 	logoutHandler,
 	logoutAllHandler,
+	getCurrentUserHandler,
 } from "../controllers/auth.controller.js";
 import authenticate from "../middlewares/auth.middleware.js";
 
@@ -53,5 +54,11 @@ authRouter.post("/logout", authenticate, logoutHandler);
  * @route POST /api/auth/logout-all
  */
 authRouter.post("/logout-all", authenticate, logoutAllHandler);
+
+/**
+ * Get current user profile
+ * @route GET /api/auth/me
+ */
+authRouter.get("/me", authenticate, getCurrentUserHandler);
 
 export default authRouter;

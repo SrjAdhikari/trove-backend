@@ -1,5 +1,7 @@
 //* src/controllers/file.controller.js
 
+import path from "node:path";
+
 import {
 	getFile,
 	uploadFile,
@@ -32,7 +34,23 @@ const uploadFileHandler = async (req, res) => {
 
 	// If no ID is explicitly requested, default to the user's permanent Root Directory
 	const parentDirId = req.params.parentDirId || user.rootDirId.toString();
-	const fileName = req.headers.filename || "untitled";
+
+	let fileName = "untitled";
+	try {
+		if (req.headers.filename) {
+			fileName = decodeURIComponent(req.headers.filename);
+		}
+	} catch (error) {
+		throw new AppError("Invalid filename encoding", BAD_REQUEST, INVALID_INPUT);
+	}
+
+	// Security: Sanitize the filename to prevent header injection or directory traversal
+	fileName = path
+		.basename(fileName)
+		.replace(/[\r\n\t\\]/g, "")
+		.trim();
+	if (!fileName) fileName = "untitled";
+	if (fileName.length > 255) fileName = fileName.substring(0, 255);
 
 	const file = await uploadFile(parentDirId, user._id, fileName, req);
 
@@ -46,9 +64,24 @@ const uploadFileHandler = async (req, res) => {
 const updateFileHandler = async (req, res) => {
 	const user = req.user;
 	const fileId = req.params.id;
-	const newFileName = req.body?.newFileName;
+	let newFileName = req.body?.newFileName;
 
-	if (!newFileName || typeof newFileName !== "string") {
+	if (!newFileName || typeof newFileName !== "string" || !newFileName.trim()) {
+		throw new AppError(
+			"Valid file name is required",
+			BAD_REQUEST,
+			INVALID_INPUT,
+		);
+	}
+
+	// Security: Sanitize new filename to prevent path traversal, control character injection, or excess length
+	newFileName = path
+		.basename(newFileName)
+		.replace(/[\r\n\t\\]/g, "")
+		.trim();
+	if (newFileName.length > 255) newFileName = newFileName.substring(0, 255);
+
+	if (!newFileName) {
 		throw new AppError(
 			"Valid file name is required",
 			BAD_REQUEST,
