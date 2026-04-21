@@ -18,6 +18,7 @@ import {
 	oneHourFromNow,
 } from "../utils/date.js";
 import verifyGoogleIdToken from "../lib/googleAuth.js";
+import verifyGithubCodeAndFetchProfile from "../lib/githubAuth.js";
 
 import {
 	generateOTP,
@@ -356,6 +357,105 @@ const loginOrCreateGoogleUser = async (idToken, deviceInfo) => {
 };
 
 /**
+ * Signs a user in via a GitHub OAuth authorization code. If the user exists,
+ * issues a new session (evicting the oldest when MAX_ALLOWED_DEVICES is reached).
+ * If not, atomically provisions a new user + root directory, then creates the session.
+ *
+ * @param {string} code - The GitHub authorization code supplied by the client
+ * @param {Object} deviceInfo - Parsed device metadata for the session
+ * @returns {Promise<{ session: Object, isNewUser: boolean }>}
+ * 	- The new session
+ * 	- A flag indicating whether this call created the account
+ * @throws {AppError} If the code is invalid, the account has no verified primary email,
+ * 	or the email matches a non-GitHub provider account.
+ */
+const loginOrCreateGithubUser = async (code, deviceInfo) => {
+	const { name, email, picture } = await verifyGithubCodeAndFetchProfile(code);
+
+	const existingUser = await User.findOne({ email }).lean();
+
+	if (existingUser) {
+		// Block email-match hijack: a password-based account for the same
+		// email must not be accessible via GitHub without an explicit link.
+		if (existingUser.provider !== "github") {
+			throw new AppError(
+				`This email is registered with ${existingUser.provider}. Please sign in using that method.`,
+				CONFLICT,
+				PROVIDER_MISMATCH,
+			);
+		}
+
+		// Refresh denormalized GitHub profile fields only when they've changed.
+		if (existingUser.name !== name || existingUser.profilePicture !== picture) {
+			await User.updateOne(
+				{ _id: existingUser._id },
+				{ name, profilePicture: picture },
+			);
+		}
+
+		const activeSessionCount = await Session.countDocuments({
+			userId: existingUser._id,
+		});
+
+		// Maintain the MAX_ALLOWED_DEVICES limit by evicting the oldest session.
+		if (activeSessionCount >= MAX_ALLOWED_DEVICES) {
+			await Session.findOneAndDelete(
+				{ userId: existingUser._id },
+				{ sort: { createdAt: 1 } },
+			);
+		}
+
+		const session = await Session.create({
+			userId: existingUser._id,
+			deviceInfo,
+		});
+
+		return { session, isNewUser: false };
+	}
+
+	const mongooseSession = await mongoose.startSession();
+	const rootDirId = new mongoose.Types.ObjectId();
+	const userId = new mongoose.Types.ObjectId();
+
+	try {
+		await mongooseSession.withTransaction(async () => {
+			await User.create(
+				[
+					{
+						_id: userId,
+						name,
+						email,
+						profilePicture: picture,
+						provider: "github",
+						rootDirId,
+						isVerified: true,
+					},
+				],
+				{ session: mongooseSession },
+			);
+
+			await Directory.create(
+				[
+					{
+						_id: rootDirId,
+						name: `root-${email}`,
+						userId,
+						parentDirId: null,
+					},
+				],
+				{ session: mongooseSession },
+			);
+		});
+	} finally {
+		await mongooseSession.endSession();
+	}
+
+	const session = await Session.create({ userId, deviceInfo });
+
+	return { session, isNewUser: true };
+};
+
+/**
  * Destroys a single specific session to log a user out of their current device.
  *
  * @param {string} sessionId - The specific session to delete
@@ -385,6 +485,7 @@ export {
 	resendOTP,
 	loginUser,
 	loginOrCreateGoogleUser,
+	loginOrCreateGithubUser,
 	logoutUser,
 	logoutAllUser,
 };
