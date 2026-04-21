@@ -11,6 +11,7 @@ import {
 	resendOTP,
 	loginUser,
 	loginOrCreateGoogleUser,
+	loginOrCreateGithubUser,
 	logoutUser,
 	logoutAllUser,
 } from "../services/auth.service.js";
@@ -19,7 +20,12 @@ import { setAuthCookie, clearAuthCookie } from "../utils/cookies.js";
 import buildDeviceInfo from "../utils/deviceInfo.js";
 
 const { BAD_REQUEST, CREATED, OK } = httpStatus;
-const { ALL_FIELDS_REQUIRED, EMAIL_REQUIRED, INVALID_ID_TOKEN } = appErrorCode;
+const {
+	ALL_FIELDS_REQUIRED,
+	EMAIL_REQUIRED,
+	INVALID_ID_TOKEN,
+	INVALID_GITHUB_CODE,
+} = appErrorCode;
 
 const registerHandler = async (req, res) => {
 	const { name, email, password } = req.body;
@@ -137,6 +143,28 @@ const googleOAuthHandler = async (req, res) => {
 	});
 };
 
+const githubOAuthHandler = async (req, res) => {
+	const { code } = req.body ?? {};
+	if (!code) {
+		throw new AppError("Code is required", BAD_REQUEST, INVALID_GITHUB_CODE);
+	}
+
+	const deviceInfo = buildDeviceInfo(req);
+	const { session, isNewUser } = await loginOrCreateGithubUser(
+		code,
+		deviceInfo,
+	);
+
+	setAuthCookie(res, session._id);
+
+	res.status(isNewUser ? CREATED : OK).json({
+		success: true,
+		message: isNewUser
+			? "User created and logged in successfully"
+			: "User logged in successfully",
+	});
+};
+
 const getCurrentUserHandler = async (req, res) => {
 	res.status(OK).json({
 		success: true,
@@ -153,5 +181,6 @@ export {
 	logoutHandler,
 	logoutAllHandler,
 	googleOAuthHandler,
+	githubOAuthHandler,
 	getCurrentUserHandler,
 };
