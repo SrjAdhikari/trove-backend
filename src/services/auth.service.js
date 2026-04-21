@@ -17,6 +17,8 @@ import {
 	tenMinutesFromNow,
 	oneHourFromNow,
 } from "../utils/date.js";
+import verifyGoogleIdToken from "../lib/googleAuth.js";
+
 import {
 	generateOTP,
 	isValidOTP,
@@ -36,6 +38,8 @@ const {
 	OTP_COOLDOWN,
 	INVALID_CREDENTIALS,
 	USER_NOT_VERIFIED,
+	PROVIDER_MISMATCH,
+	GOOGLE_EMAIL_NOT_VERIFIED,
 } = appErrorCode;
 
 const { MAX_ALLOWED_DEVICES } = envConfig;
@@ -195,6 +199,16 @@ const loginUser = async (email, password, deviceInfo) => {
 		);
 	}
 
+	// OAuth-provisioned users have no password — reject before bcrypt tries
+	// to compare against an undefined hash (would throw a raw bcrypt error).
+	if (user.provider !== "email") {
+		throw new AppError(
+			`Please sign in with ${user.provider}`,
+			BAD_REQUEST,
+			PROVIDER_MISMATCH,
+		);
+	}
+
 	if (!user.isVerified) {
 		throw new AppError(
 			"Please verify your email first",
@@ -234,6 +248,114 @@ const loginUser = async (email, password, deviceInfo) => {
 };
 
 /**
+ * Signs a user in via a Google ID token. If the user exists, issues a new
+ * session (evicting the oldest when MAX_ALLOWED_DEVICES is reached).
+ * If not atomically provisions a new user + root directory, then creates the session.
+ *
+ * @param {string} idToken - The Google ID token supplied by the client
+ * @param {Object} deviceInfo - Parsed device metadata for the session
+ * @returns {Promise<{ session: Object, isNewUser: boolean }>}
+ * 	- The new session
+ * 	- A flag indicating whether this call created the account
+ * @throws {AppError} If the ID token is invalid or malformed
+ */
+const loginOrCreateGoogleUser = async (idToken, deviceInfo) => {
+	const payload = await verifyGoogleIdToken(idToken);
+	const { name, email, picture, email_verified: emailVerified } = payload;
+
+	// Check if email is verified by Google
+	if (!emailVerified) {
+		throw new AppError(
+			"Google has not verified this email address",
+			BAD_REQUEST,
+			GOOGLE_EMAIL_NOT_VERIFIED,
+		);
+	}
+
+	const existingUser = await User.findOne({ email }).lean();
+
+	if (existingUser) {
+		// Block email-match hijack: a password-based account for the same
+		// email must not be accessible via Google without an explicit link.
+		if (existingUser.provider !== "google") {
+			throw new AppError(
+				`This email is registered with ${existingUser.provider}. Please sign in using that method.`,
+				CONFLICT,
+				PROVIDER_MISMATCH,
+			);
+		}
+
+		// Refresh denormalized Google profile fields only when they've actually changed
+		if (existingUser.name !== name || existingUser.profilePicture !== picture) {
+			await User.updateOne(
+				{ _id: existingUser._id },
+				{ name, profilePicture: picture },
+			);
+		}
+
+		const activeSessionCount = await Session.countDocuments({
+			userId: existingUser._id,
+		});
+
+		// Maintain the MAX_ALLOWED_DEVICES limit by evicting the oldest session.
+		if (activeSessionCount >= MAX_ALLOWED_DEVICES) {
+			await Session.findOneAndDelete(
+				{ userId: existingUser._id },
+				{ sort: { createdAt: 1 } },
+			);
+		}
+
+		const session = await Session.create({
+			userId: existingUser._id,
+			deviceInfo,
+		});
+
+		return { session, isNewUser: false };
+	}
+
+	const mongooseSession = await mongoose.startSession();
+	const rootDirId = new mongoose.Types.ObjectId();
+	const userId = new mongoose.Types.ObjectId();
+
+	try {
+		await mongooseSession.withTransaction(async () => {
+			await User.create(
+				[
+					{
+						_id: userId,
+						name,
+						email,
+						profilePicture: picture,
+						provider: "google",
+						rootDirId,
+						isVerified: true,
+					},
+				],
+				{ session: mongooseSession },
+			);
+
+			await Directory.create(
+				[
+					{
+						_id: rootDirId,
+						name: `root-${email}`,
+						userId,
+						parentDirId: null,
+					},
+				],
+				{ session: mongooseSession },
+			);
+		});
+	} finally {
+		await mongooseSession.endSession();
+	}
+
+	const session = await Session.create({ userId, deviceInfo });
+
+	return { session, isNewUser: true };
+};
+
+/**
  * Destroys a single specific session to log a user out of their current device.
  *
  * @param {string} sessionId - The specific session to delete
@@ -262,6 +384,7 @@ export {
 	verifyOTP,
 	resendOTP,
 	loginUser,
+	loginOrCreateGoogleUser,
 	logoutUser,
 	logoutAllUser,
 };

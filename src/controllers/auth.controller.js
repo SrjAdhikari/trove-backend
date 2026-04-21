@@ -1,6 +1,5 @@
 //* src/controllers/auth.controller.js
 
-import { UAParser } from "ua-parser-js";
 import AppError from "../errors/AppError.js";
 
 import httpStatus from "../constants/httpStatus.js";
@@ -11,13 +10,16 @@ import {
 	verifyOTP,
 	resendOTP,
 	loginUser,
+	loginOrCreateGoogleUser,
 	logoutUser,
 	logoutAllUser,
 } from "../services/auth.service.js";
+
 import { setAuthCookie, clearAuthCookie } from "../utils/cookies.js";
+import buildDeviceInfo from "../utils/deviceInfo.js";
 
 const { BAD_REQUEST, CREATED, OK } = httpStatus;
-const { ALL_FIELDS_REQUIRED, EMAIL_REQUIRED } = appErrorCode;
+const { ALL_FIELDS_REQUIRED, EMAIL_REQUIRED, INVALID_ID_TOKEN } = appErrorCode;
 
 const registerHandler = async (req, res) => {
 	const { name, email, password } = req.body;
@@ -81,26 +83,7 @@ const loginHandler = async (req, res) => {
 		);
 	}
 
-	// Extract raw headers for device info
-	const userAgent = req.headers["user-agent"] || "";
-	const ipAddress =
-		req.headers["x-forwarded-for"] || req.socket?.remoteAddress || "Unknown";
-
-	// Parse User-Agent string
-	const parser = new UAParser(userAgent);
-	const parsedUA = parser.getResult();
-
-	// Structure device metadata for the Mongo Session Model
-	const deviceInfo = {
-		userAgent,
-		ipAddress,
-		deviceType: parsedUA.device.type || "desktop",
-		browser:
-			`${parsedUA.browser.name || "Unknown"} ${parsedUA.browser.version || ""}`.trim(),
-		deviceOS:
-			`${parsedUA.os.name || "Unknown"} ${parsedUA.os.version || ""}`.trim(),
-	};
-
+	const deviceInfo = buildDeviceInfo(req);
 	const session = await loginUser(email, password, deviceInfo);
 
 	setAuthCookie(res, session._id);
@@ -131,6 +114,29 @@ const logoutAllHandler = async (req, res) => {
 		.json({ success: true, message: "Logged out of all devices successfully" });
 };
 
+const googleOAuthHandler = async (req, res) => {
+	const { idToken } = req.body ?? {};
+
+	if (!idToken) {
+		throw new AppError("ID token is required", BAD_REQUEST, INVALID_ID_TOKEN);
+	}
+
+	const deviceInfo = buildDeviceInfo(req);
+	const { session, isNewUser } = await loginOrCreateGoogleUser(
+		idToken,
+		deviceInfo,
+	);
+
+	setAuthCookie(res, session._id);
+
+	res.status(isNewUser ? CREATED : OK).json({
+		success: true,
+		message: isNewUser
+			? "User created and logged in successfully"
+			: "User logged in successfully",
+	});
+};
+
 const getCurrentUserHandler = async (req, res) => {
 	res.status(OK).json({
 		success: true,
@@ -146,5 +152,6 @@ export {
 	loginHandler,
 	logoutHandler,
 	logoutAllHandler,
+	googleOAuthHandler,
 	getCurrentUserHandler,
 };

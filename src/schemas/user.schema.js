@@ -3,7 +3,7 @@
 const userSchema = {
 	$jsonSchema: {
 		bsonType: "object",
-		required: ["_id", "name", "email", "password"],
+		required: ["_id", "name", "email"],
 		properties: {
 			_id: {
 				bsonType: "objectId",
@@ -29,6 +29,15 @@ const userSchema = {
 			rootDirId: {
 				bsonType: "objectId",
 				description: "rootDirId must be a valid ObjectId",
+			},
+			profilePicture: {
+				bsonType: "string",
+				description: "Profile picture must be a valid URL",
+			},
+			provider: {
+				bsonType: "string",
+				enum: ["email", "google", "github"],
+				description: "Provider must be one of email, google, or github",
 			},
 			otp: {
 				bsonType: "string",

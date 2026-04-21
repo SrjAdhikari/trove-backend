@@ -23,13 +23,25 @@ const userSchema = new Schema(
 		},
 		password: {
 			type: String,
-			required: true,
+			required: function () {
+				return this.provider === "email";
+			},
 			minlength: 8,
 			select: false,
 		},
 		rootDirId: {
 			type: Schema.Types.ObjectId,
 			ref: "Directory",
+		},
+		profilePicture: {
+			type: String,
+			default: null,
+		},
+		provider: {
+			type: String,
+			enum: ["email", "google", "github"],
+			default: "email",
+			immutable: true,
 		},
 		otp: {
 			type: String,

@@ -13,6 +13,7 @@ import {
 	loginHandler,
 	logoutHandler,
 	logoutAllHandler,
+	googleOAuthHandler,
 	getCurrentUserHandler,
 } from "../controllers/auth.controller.js";
 import authenticate from "../middlewares/auth.middleware.js";
@@ -54,6 +55,12 @@ authRouter.post("/logout", authenticate, logoutHandler);
  * @route POST /api/auth/logout-all
  */
 authRouter.post("/logout-all", authenticate, logoutAllHandler);
+
+/**
+ * Google OAuth login
+ * @route POST /api/auth/google
+ */
+authRouter.post("/google", googleOAuthHandler);
 
 /**
  * Get current user profile
