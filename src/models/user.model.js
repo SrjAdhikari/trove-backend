@@ -41,7 +41,6 @@ const userSchema = new Schema(
 			type: String,
 			enum: ["email", "google", "github"],
 			default: "email",
-			immutable: true,
 		},
 		otp: {
 			type: String,
@@ -74,6 +73,13 @@ userSchema.pre("save", async function () {
 
 	const salt = await bcrypt.genSalt(10);
 	this.password = await bcrypt.hash(this.password, salt);
+});
+
+// Prevent changing provider after creation.
+userSchema.pre("save", async function () {
+	if (!this.isNew && this.isDirectModified("provider")) {
+		throw new Error("Path `provider` cannot be changed after creation");
+	}
 });
 
 // Compare incoming user password with hashed password
