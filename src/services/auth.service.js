@@ -10,7 +10,6 @@ import AppError from "../errors/AppError.js";
 
 import httpStatus from "../constants/httpStatus.js";
 import appErrorCode from "../constants/appErrorCode.js";
-import envConfig from "../constants/env.js";
 
 import {
 	ONE_MINUTE_MS,
@@ -27,6 +26,8 @@ import {
 	isOTPExpired,
 	isOTPCooldownActive,
 } from "./otp.service.js";
+import { loginOrCreateOAuthUser } from "./oauth.service.js";
+import { enforceDeviceLimit } from "./session.service.js";
 
 const { CONFLICT, NOT_FOUND, BAD_REQUEST, UNAUTHORIZED, TOO_MANY_REQUESTS } =
 	httpStatus;
@@ -42,8 +43,6 @@ const {
 	PROVIDER_MISMATCH,
 	GOOGLE_EMAIL_NOT_VERIFIED,
 } = appErrorCode;
-
-const { MAX_ALLOWED_DEVICES } = envConfig;
 
 /**
  * Resolves user registration including unverified user re-registration edge-cases.
@@ -228,17 +227,7 @@ const loginUser = async (email, password, deviceInfo) => {
 		);
 	}
 
-	const activeSessionCount = await Session.countDocuments({
-		userId: user._id,
-	});
-
-	// Maintain the MAX_ALLOWED_DEVICES limit by silently ejecting their oldest browser session.
-	if (activeSessionCount >= MAX_ALLOWED_DEVICES) {
-		await Session.findOneAndDelete(
-			{ userId: user._id },
-			{ sort: { createdAt: 1 } },
-		);
-	}
+	await enforceDeviceLimit(user._id);
 
 	const session = await Session.create({
 		userId: user._id,
@@ -249,22 +238,21 @@ const loginUser = async (email, password, deviceInfo) => {
 };
 
 /**
- * Signs a user in via a Google ID token. If the user exists, issues a new
- * session (evicting the oldest when MAX_ALLOWED_DEVICES is reached).
- * If not atomically provisions a new user + root directory, then creates the session.
+ * Signs a user in with a Google ID token.
+ * Verifies the token, enforces the `email_verified` claim, then delegates
+ * to the shared OAuth helper for user lookup/creation and session issuance.
  *
- * @param {string} idToken - The Google ID token supplied by the client
- * @param {Object} deviceInfo - Parsed device metadata for the session
- * @returns {Promise<{ session: Object, isNewUser: boolean }>}
- * 	- The new session
- * 	- A flag indicating whether this call created the account
- * @throws {AppError} If the ID token is invalid or malformed
+ * @param {string} idToken - Google ID token supplied by the client.
+ * @param {Object} deviceInfo - Parsed device metadata attached to the new session.
+ * @returns {Promise<{ session: Object, isNewUser: boolean }>} The issued session and whether a new account was created.
+ *
+ * @throws {AppError} `INVALID_ID_TOKEN` — the token is invalid or malformed.
+ * @throws {AppError} `GOOGLE_EMAIL_NOT_VERIFIED` — Google has not verified the email on the account.
  */
 const loginOrCreateGoogleUser = async (idToken, deviceInfo) => {
 	const payload = await verifyGoogleIdToken(idToken);
 	const { name, email, picture, email_verified: emailVerified } = payload;
 
-	// Check if email is verified by Google
 	if (!emailVerified) {
 		throw new AppError(
 			"Google has not verified this email address",
@@ -273,186 +261,24 @@ const loginOrCreateGoogleUser = async (idToken, deviceInfo) => {
 		);
 	}
 
-	const existingUser = await User.findOne({ email }).lean();
-
-	if (existingUser) {
-		// Block email-match hijack: a password-based account for the same
-		// email must not be accessible via Google without an explicit link.
-		if (existingUser.provider !== "google") {
-			throw new AppError(
-				`This email is registered with ${existingUser.provider}. Please sign in using that method.`,
-				CONFLICT,
-				PROVIDER_MISMATCH,
-			);
-		}
-
-		// Refresh denormalized Google profile fields only when they've actually changed
-		if (existingUser.name !== name || existingUser.profilePicture !== picture) {
-			await User.updateOne(
-				{ _id: existingUser._id },
-				{ name, profilePicture: picture },
-			);
-		}
-
-		const activeSessionCount = await Session.countDocuments({
-			userId: existingUser._id,
-		});
-
-		// Maintain the MAX_ALLOWED_DEVICES limit by evicting the oldest session.
-		if (activeSessionCount >= MAX_ALLOWED_DEVICES) {
-			await Session.findOneAndDelete(
-				{ userId: existingUser._id },
-				{ sort: { createdAt: 1 } },
-			);
-		}
-
-		const session = await Session.create({
-			userId: existingUser._id,
-			deviceInfo,
-		});
-
-		return { session, isNewUser: false };
-	}
-
-	const mongooseSession = await mongoose.startSession();
-	const rootDirId = new mongoose.Types.ObjectId();
-	const userId = new mongoose.Types.ObjectId();
-
-	try {
-		await mongooseSession.withTransaction(async () => {
-			await User.create(
-				[
-					{
-						_id: userId,
-						name,
-						email,
-						profilePicture: picture,
-						provider: "google",
-						rootDirId,
-						isVerified: true,
-					},
-				],
-				{ session: mongooseSession },
-			);
-
-			await Directory.create(
-				[
-					{
-						_id: rootDirId,
-						name: `root-${email}`,
-						userId,
-						parentDirId: null,
-					},
-				],
-				{ session: mongooseSession },
-			);
-		});
-	} finally {
-		await mongooseSession.endSession();
-	}
-
-	const session = await Session.create({ userId, deviceInfo });
-
-	return { session, isNewUser: true };
+	return loginOrCreateOAuthUser("google", { name, email, picture }, deviceInfo);
 };
 
 /**
- * Signs a user in via a GitHub OAuth authorization code. If the user exists,
- * issues a new session (evicting the oldest when MAX_ALLOWED_DEVICES is reached).
- * If not, atomically provisions a new user + root directory, then creates the session.
+ * Signs a user in with a GitHub OAuth authorization code.
+ * Exchanges the code for a verified profile, then delegates to the shared
+ * OAuth helper for user lookup/creation and session issuance.
  *
- * @param {string} code - The GitHub authorization code supplied by the client
- * @param {Object} deviceInfo - Parsed device metadata for the session
- * @returns {Promise<{ session: Object, isNewUser: boolean }>}
- * 	- The new session
- * 	- A flag indicating whether this call created the account
- * @throws {AppError} If the code is invalid, the account has no verified primary email,
- * 	or the email matches a non-GitHub provider account.
+ * @param {string} code - GitHub authorization code supplied by the client.
+ * @param {Object} deviceInfo - Parsed device metadata attached to the new session.
+ * @returns {Promise<{ session: Object, isNewUser: boolean }>} The issued session and whether a new account was created.
+
+ * @throws {AppError} `INVALID_GITHUB_CODE` — the code is invalid, expired, or the GitHub API call failed.
+ * @throws {AppError} `GITHUB_EMAIL_NOT_VERIFIED` — the account has no verified primary email.
  */
 const loginOrCreateGithubUser = async (code, deviceInfo) => {
-	const { name, email, picture } = await verifyGithubCodeAndFetchProfile(code);
-
-	const existingUser = await User.findOne({ email }).lean();
-
-	if (existingUser) {
-		// Block email-match hijack: a password-based account for the same
-		// email must not be accessible via GitHub without an explicit link.
-		if (existingUser.provider !== "github") {
-			throw new AppError(
-				`This email is registered with ${existingUser.provider}. Please sign in using that method.`,
-				CONFLICT,
-				PROVIDER_MISMATCH,
-			);
-		}
-
-		// Refresh denormalized GitHub profile fields only when they've changed.
-		if (existingUser.name !== name || existingUser.profilePicture !== picture) {
-			await User.updateOne(
-				{ _id: existingUser._id },
-				{ name, profilePicture: picture },
-			);
-		}
-
-		const activeSessionCount = await Session.countDocuments({
-			userId: existingUser._id,
-		});
-
-		// Maintain the MAX_ALLOWED_DEVICES limit by evicting the oldest session.
-		if (activeSessionCount >= MAX_ALLOWED_DEVICES) {
-			await Session.findOneAndDelete(
-				{ userId: existingUser._id },
-				{ sort: { createdAt: 1 } },
-			);
-		}
-
-		const session = await Session.create({
-			userId: existingUser._id,
-			deviceInfo,
-		});
-
-		return { session, isNewUser: false };
-	}
-
-	const mongooseSession = await mongoose.startSession();
-	const rootDirId = new mongoose.Types.ObjectId();
-	const userId = new mongoose.Types.ObjectId();
-
-	try {
-		await mongooseSession.withTransaction(async () => {
-			await User.create(
-				[
-					{
-						_id: userId,
-						name,
-						email,
-						profilePicture: picture,
-						provider: "github",
-						rootDirId,
-						isVerified: true,
-					},
-				],
-				{ session: mongooseSession },
-			);
-
-			await Directory.create(
-				[
-					{
-						_id: rootDirId,
-						name: `root-${email}`,
-						userId,
-						parentDirId: null,
-					},
-				],
-				{ session: mongooseSession },
-			);
-		});
-	} finally {
-		await mongooseSession.endSession();
-	}
-
-	const session = await Session.create({ userId, deviceInfo });
-
-	return { session, isNewUser: true };
+	const profile = await verifyGithubCodeAndFetchProfile(code);
+	return loginOrCreateOAuthUser("github", profile, deviceInfo);
 };
 
 /**
