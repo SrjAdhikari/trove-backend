@@ -1,7 +1,7 @@
 //* src/services/otp.service.js
 
 import crypto from "crypto";
-import sendEmail from "../utils/sendEmail.js";
+import sendEmail from "../lib/sendEmail.js";
 import { OTP_EMAIL_TEMPLATE } from "../utils/emailTemplates.js";
 import { TEN_MINUTES_MS } from "../utils/date.js";
 
