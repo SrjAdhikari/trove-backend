@@ -1,4 +1,4 @@
-//* src/utils/sendEmail.js
+//* src/lib/sendEmail.js
 
 import { Resend } from "resend";
 import envConfig from "../constants/env.js";
