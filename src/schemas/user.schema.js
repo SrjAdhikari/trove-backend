@@ -31,8 +31,8 @@ const userSchema = {
 				description: "rootDirId must be a valid ObjectId",
 			},
 			profilePicture: {
-				bsonType: "string",
-				description: "Profile picture must be a valid URL",
+				bsonType: ["string", "null"],
+				description: "Profile picture URL, or null if not yet set",
 			},
 			provider: {
 				bsonType: "string",
