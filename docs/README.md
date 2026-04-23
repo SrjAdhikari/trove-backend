@@ -6,9 +6,10 @@ Please navigate to the specific domain you need below:
 
 ### 📂 [Architecture](./architecture)
 
-- `system-design.md` - High-level overview of services
-- `database-schema.md` - Explanations of core mongoose models
-- `folder-structure.md` - Express JS folder conventions
+- [`database-schema.md`](./architecture/database-schema.md) - Models, indexes, TTLs, hidden-field convention, and cross-model relationships.
+- [`oauth-multi-provider.md`](./architecture/oauth-multi-provider.md) - Shared OAuth sign-in helper, provider-specific divergences, and account-takeover guards.
+- [`transaction-patterns.md`](./architecture/transaction-patterns.md) - Atomic User+Directory creation, why Session.create runs outside the transaction, Mongoose mechanics.
+- [`email-template-system.md`](./architecture/email-template-system.md) - Transactional email composition model, brand tokens, client-compatibility rules.
 - [`drive-import.md`](./architecture/drive-import.md) - Design for the Google Drive import feature (pre-implementation).
 
 ### 📂 [Authentication](./authentication)
@@ -26,7 +27,7 @@ Please navigate to the specific domain you need below:
 ### 📂 [API Documentation](./api)
 
 - `endpoints.md` - Master list of all available API routes
-- `error-codes.md` - Glossary for `AppErrorCode` constants
+- [`error-codes.md`](./api/error-codes.md) - Glossary for `appErrorCode` constants, HTTP-status conventions, framework-error mappings.
 - `postman-collection.json` - Exported configurations for local testing
 
 ### 📂 [File](./file)
