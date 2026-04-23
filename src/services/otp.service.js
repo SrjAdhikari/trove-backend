@@ -2,7 +2,7 @@
 
 import crypto from "crypto";
 import sendEmail from "../lib/sendEmail.js";
-import { OTP_EMAIL_TEMPLATE } from "../utils/emailTemplates.js";
+import { VERIFY_EMAIL_TEMPLATE } from "../templates/emails/index.js";
 import { TEN_MINUTES_MS } from "../utils/date.js";
 
 /**
@@ -37,7 +37,11 @@ const isValidOTP = (inputOTP, storedHash) => {
 
 // Function to send OTP to user's email
 const sendOTP = async (name, email, otp) => {
-	await sendEmail(email, "Verify your email", OTP_EMAIL_TEMPLATE(name, otp));
+	await sendEmail(
+		email,
+		"Verify your email address",
+		VERIFY_EMAIL_TEMPLATE(name, otp),
+	);
 };
 
 // Function to check if OTP has expired
