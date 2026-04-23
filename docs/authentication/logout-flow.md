@@ -2,7 +2,7 @@
 
 This document outlines the architecture and execution logic for securely terminating active sessions across both single devices (standard logout) and globally across all authenticated devices (force disconnect).
 
-> **Provider-agnostic scope:** Both endpoints operate on the `Session` document, not on the user's identity provider. Sessions issued via email/password login and via Google OAuth are indistinguishable at this layer — the `token` cookie holds an opaque session ID regardless of how the session was originally issued.
+> **Provider-agnostic scope:** Both endpoints operate on the `Session` document, not on the user's identity provider. Sessions issued via email/password login, Google OAuth, and GitHub OAuth are all indistinguishable at this layer — the `token` cookie holds an opaque session ID regardless of how the session was originally issued.
 
 ---
 

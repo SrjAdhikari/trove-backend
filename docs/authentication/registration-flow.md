@@ -73,14 +73,19 @@ Sensitive fields like `password`, `otp`, `otpExpiresAt`, and `verificationExpire
 
 ---
 
-## 🔀 Alternative: Google OAuth Registration
+## 🔀 Alternative: OAuth Registration
 
-An email + OTP signup is one of two registration paths. The other is `POST /api/auth/google` — a first-time call with a valid Google ID token implicitly registers the user, skipping the entire OTP flow.
+An email + OTP signup is one of three registration paths. The others are OAuth:
 
-- No `password` is stored; `provider` is set to `"google"`; `isVerified: true` is assigned from the start (Google has already verified the email, enforced via the `email_verified` check).
+- `POST /api/auth/google` — first-time call with a valid Google ID token
+- `POST /api/auth/github` — first-time call with a valid GitHub authorization code
+
+Both OAuth paths implicitly register the user, skipping the entire OTP flow:
+
+- No `password` is stored; `provider` is set to `"google"` or `"github"`; `isVerified: true` is assigned from the start. The provider has already verified the email — enforced via `payload.email_verified` for Google and the `primary: true && verified: true` check on GitHub's `/user/emails` endpoint.
 - The User document and their root `Directory` are created atomically in one MongoDB transaction, and a session cookie is issued in the same response.
-- Subsequent `POST /api/auth/google` calls with the same email are logins, not registrations, and cannot accidentally collide with a password-based account for that email (see the `PROVIDER_MISMATCH` guard).
+- Subsequent calls with the same email are logins, not registrations, and cannot accidentally collide with a password-based (or other-OAuth) account for that email — the `PROVIDER_MISMATCH` guard rejects the mismatched sign-in with `409 CONFLICT`.
 
-See [`login-and-sessions.md`](./login-and-sessions.md) for the full Google OAuth flow and the identity-provider model.
+See [`login-and-sessions.md`](./login-and-sessions.md) for the full OAuth flows, the shared service helper (`loginOrCreateOAuthUser`), and the identity-provider model.
 
 ---
