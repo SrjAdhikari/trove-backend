@@ -9,6 +9,7 @@ Please navigate to the specific domain you need below:
 - `system-design.md` - High-level overview of services
 - `database-schema.md` - Explanations of core mongoose models
 - `folder-structure.md` - Express JS folder conventions
+- [`drive-import.md`](./architecture/drive-import.md) - Design for the Google Drive import feature (pre-implementation).
 
 ### 📂 [Authentication](./authentication)
 
@@ -16,6 +17,11 @@ Please navigate to the specific domain you need below:
 - [`login-and-sessions.md`](./authentication/login-and-sessions.md) - Session issuance for email/password login, Google OAuth, and GitHub OAuth sign-in, the identity-provider model, and cookie-based session strategy.
 - [`logout-flow.md`](./authentication/logout-flow.md) - Single-device and global logout, provider-agnostic session destruction.
 - `password-reset.md` - Forget password logic _(not yet implemented)_.
+
+### 📂 [Workflow](./workflow)
+
+- [`release-workflow.md`](./workflow/release-workflow.md) - Versioning (semver), branch model, release cadence, how to cut a release.
+- [`branch-commit-strategy.md`](./workflow/branch-commit-strategy.md) - Branch naming, commit message conventions, PR workflow, post-merge cleanup.
 
 ### 📂 [API Documentation](./api)
 
