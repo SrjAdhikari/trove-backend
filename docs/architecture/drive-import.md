@@ -1,6 +1,6 @@
 # Google Drive Import
 
-> **Status:** Design / pre-implementation (2026-04-22). This document describes the intended architecture for the `POST /api/drive/import` feature. No code for this feature is in the repo yet — update this doc with "as-built" notes once implementation lands.
+> **Status:** As-built (2026-04-25, shipped in PR #21). The `POST /api/drive/import` endpoint is live. The design below matches the current implementation; refresh when behavior changes.
 
 Lets a signed-in user pick files and folders from their Google Drive and copy them into TroveCloud, preserving the folder hierarchy. One-shot, selective import — not a persistent Drive sync.
 

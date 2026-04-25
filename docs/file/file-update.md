@@ -45,6 +45,7 @@ The File update logic adheres to the Controller-Service pattern, with authentica
       "_id": "...",
       "name": "Updated Name.pdf",
       "extension": ".pdf",
+      "size": 2457600,
       "parentDirId": "...",
       "userId": "...",
       "createdAt": "...",

@@ -1,6 +1,6 @@
 # Error Codes
 
-> **Status:** As-of 2026-04-23. This document is a glossary that drifts as the codebase evolves — refresh it when adding or removing codes from `src/constants/appErrorCode.js`.
+> **Status:** As-of 2026-04-25. This document is a glossary that drifts as the codebase evolves — refresh it when adding or removing codes from `src/constants/appErrorCode.js`.
 
 The TroveCloud backend returns structured errors with stable, machine-readable codes. The frontend consumes these codes to drive UI behavior (which form to redirect to, which message to show, when to retry). This document is the contract: the source of truth for what each code means and where it's thrown.
 
@@ -66,6 +66,7 @@ Sourced from `src/constants/appErrorCode.js` (an `Object.freeze`-ed enum). Liste
 | `FILE_DELETE_FAILED` | 500          | Disk or DB delete failed after the request was authorized.                                              | `deleteFile` in `file.service.js`     |
 | `FILE_NOT_FOUND`     | 404          | The requested file doesn't exist or doesn't belong to the user.                                         | `getFile`, `updateFile`, `deleteFile` |
 | `FILE_RENAME_FAILED` | 500          | Mongoose update failed after the user passed authorization checks.                                      | `updateFile` in `file.service.js`     |
+| `FILE_TOO_LARGE`     | 400          | Upload exceeded the 100 MB per-file cap. Triggered mid-stream by the byte counter; both DB row and partial disk file are rolled back. | `uploadFile` in `file.service.js`     |
 | `FILE_UPLOAD_FAILED` | 500          | Stream pipeline to disk failed after the DB row was created — both DB and partial file get rolled back. | `uploadFile` in `file.service.js`     |
 
 ### Directory
@@ -104,6 +105,19 @@ Sourced from `src/constants/appErrorCode.js` (an `Object.freeze`-ed enum). Liste
 | `INTERNAL_ERROR`      | 500          | Catch-all for unexpected errors. Sets `isOperational: false` so the original message is hidden in production. | `globalErrorHandler` fallback when no other handler matches        |
 | `INVALID_INPUT`       | 400          | Body validation failed for a non-required-field reason (wrong type, out of range, malformed encoding).        | Various handlers (`directory.controller.js`, `file.controller.js`) |
 | `ROUTE_NOT_FOUND`     | 404          | Requested URL didn't match any registered route.                                                              | 404 handler in `app.js`                                            |
+
+### Drive Import
+
+Returned by `POST /api/drive/import`. Most appear inside the `failed[]` array of the partial-success response rather than as a top-level error — the request itself returns 200 unless input validation fails. See [`docs/architecture/drive-import.md`](../architecture/drive-import.md) for the full flow.
+
+| Code                          | Typical HTTP | Meaning                                                                                              | Where thrown                                                                                |
+| ----------------------------- | ------------ | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `DRIVE_EXPORT_TOO_LARGE`      | failed[]     | Drive returned `403 exportSizeLimitExceeded` — Google Docs/Slides over 10 MB cannot be exported.     | `googleDrive.js` shared catch                                                               |
+| `DRIVE_IMPORT_FAILED`         | failed[]     | Generic Drive failure — quota, network, JSON parse, or any other unmapped error.                     | `googleDrive.js` and `drive.service.js` per-item catch                                      |
+| `DRIVE_IMPORT_LIMIT_EXCEEDED` | failed[]     | Per-file size cap (100 MB) or aggregate cap (500 MB) tripped during streaming.                       | `streamFileIntoTrove` in `drive.service.js` (pre-flight + post-hoc byte counter)            |
+| `DRIVE_ITEM_NOT_FOUND`        | failed[]     | Drive returned 404, or the item was trashed when re-fetched.                                         | `googleDrive.js` (404 mapping); `importItem` in `drive.service.js` (trashed check)          |
+| `INVALID_DRIVE_TOKEN`         | 400 / failed[] | Missing/invalid `accessToken` body field, or Drive returned 401.                                   | `importDriveHandler` (input validation, top-level 400); `googleDrive.js` (401 mapping)      |
+| `UNSUPPORTED_DRIVE_TYPE`      | failed[]     | Picked item is a Shortcut, or a Google-native type without an export mapping (Forms, Drawings, etc.). | `importItem` in `drive.service.js`                                                          |
 
 ---
 
@@ -176,6 +190,5 @@ Frontend code should always switch on `code` to drive UI behavior. Never parse `
 The following codes will likely be added when their corresponding features land:
 
 - `RATE_LIMIT_EXCEEDED` (429) — when express-rate-limit (or equivalent) is added during the security-section work.
-- `INVALID_DRIVE_TOKEN`, `DRIVE_ITEM_NOT_FOUND`, `DRIVE_IMPORT_FAILED`, `UNSUPPORTED_DRIVE_TYPE`, `DRIVE_EXPORT_TOO_LARGE`, `DRIVE_IMPORT_LIMIT_EXCEEDED` — when the Google Drive import feature ships (see `docs/architecture/drive-import.md`).
 
 ---

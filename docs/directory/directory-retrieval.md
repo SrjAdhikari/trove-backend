@@ -31,9 +31,14 @@ The Directory retrieval logic adheres to the Controller-Service pattern, with au
 - **Service Logic (`getDirectory`):**
   1. Queries `Directory.findOne({ _id: directoryId, userId })` to fetch the target directory with ownership verification.
   2. If no document matches, throws `AppError` with `NOT_FOUND` and `DIRECTORY_NOT_FOUND`.
-  3. **High-Performance Querying:** Uses `Promise.all()` to concurrently fetch child files and child directories instead of sequential awaits.
-  4. **Defense-in-Depth:** Both child queries (`File.find`, `Directory.find`) include `userId` in the filter. Even though the parent directory is already ownership-verified, this guards against data leaks from orphaned documents caused by bugs in move/copy/migration operations.
-  5. Returns a unified object: `{ ...directory, files, childDirectories }`.
+  3. **Concurrent batch (4-way `Promise.all`):**
+     - `File.find({ parentDirId, userId })` — files directly inside the requested directory.
+     - `Directory.find({ parentDirId, userId })` — immediate child folders.
+     - `getNestedSubtreeStats(directoryId, userId)` — recursive `fileCount` + `totalSize` for the requested directory's full subtree.
+     - `getAncestors(directoryId, userId)` — ordered ancestor chain from root to the directory's immediate parent.
+  4. **Per-child stats fanout:** For each immediate child folder, calls `getNestedSubtreeStats(childId, userId)` in parallel via `Promise.all` over `childDirs.map(...)` so each card on the listing carries its own recursive `fileCount` + `totalSize`.
+  5. **Defense-in-Depth:** Every query (top-level + helpers + per-child) includes `userId` as a filter. Even though the parent directory is ownership-verified, this guards against data leaks from orphaned documents and from any future bug in move/copy operations.
+  6. Returns a unified object: `{ ...directory, fileCount, totalSize, ancestors, files, childDirectories }`.
 
 - **Response:**
   ```json
@@ -42,16 +47,72 @@ The Directory retrieval logic adheres to the Controller-Service pattern, with au
     "message": "Directory fetched successfully",
     "data": {
       "_id": "...",
-      "name": "...",
+      "name": "Documents",
       "parentDirId": "...",
       "userId": "...",
-      "files": [{ "_id": "...", "id": "...", "name": "...", "extension": "..." }],
-      "childDirectories": [{ "_id": "...", "id": "...", "name": "..." }]
+      "createdAt": "...",
+      "updatedAt": "...",
+      "fileCount": 142,
+      "totalSize": 1234567890,
+      "ancestors": [
+        { "_id": "root-dir-id", "name": "My Files" }
+      ],
+      "files": [
+        {
+          "_id": "...",
+          "id": "...",
+          "name": "report.pdf",
+          "extension": ".pdf",
+          "size": 2457600,
+          "parentDirId": "...",
+          "userId": "...",
+          "createdAt": "...",
+          "updatedAt": "..."
+        }
+      ],
+      "childDirectories": [
+        {
+          "_id": "...",
+          "id": "...",
+          "name": "Reports",
+          "parentDirId": "...",
+          "userId": "...",
+          "createdAt": "...",
+          "updatedAt": "...",
+          "fileCount": 24,
+          "totalSize": 58982400
+        }
+      ]
     }
   }
   ```
 
+  - `fileCount` / `totalSize` on the top-level directory cover **the whole subtree** (every file under it, recursively). Also present on each `childDirectories[]` entry, scoped to that child's own subtree. `ancestors` is empty `[]` when viewing root.
+
 ---
+
+## 🔢 Recursive Stats (`getNestedSubtreeStats`)
+
+Computes `fileCount` and `totalSize` for a directory and every descendant folder, in two DB round-trips:
+
+1. `getAllNestedDirectories(directoryId, userId)` — runs the same `$match` + `$graphLookup` aggregation used by `deleteDirectory` to flatten the subtree (target directory + every nested subdirectory) in one query.
+2. `File.find({ parentDirId: { $in: allDirIds }, userId }).lean()` — one query for every file inside any directory in the flattened subtree.
+
+Then in JS: `fileCount = files.length`, `totalSize = files.reduce(sum, file => sum + file.size, 0)`.
+
+Stats are **computed on read** — no `fileCount`/`totalSize` field is persisted on the Directory document. This keeps writes cheap (a file upload does not have to walk up the tree updating ancestor counters) at the cost of doing the recursive count on every listing. Acceptable trade-off until a single subtree exceeds ~100k files; revisit with stored counters then.
+
+## 🧭 Ancestor Chain (`getAncestors`)
+
+Returns the ordered list `[root, …, immediate parent]` for breadcrumbs. **Single DB call** via an upward `$graphLookup`:
+
+- `startWith: "$parentDirId"` — begin at the directory's immediate parent.
+- `connectFromField: "parentDirId"`, `connectToField: "_id"` — follow each parent up the chain.
+- `depthField: "depth"` — every returned ancestor carries its hop count from the start (depth 0 = immediate parent, highest depth = root).
+- `restrictSearchWithMatch: { userId }` — confines the climb to the requesting user's tree.
+- `maxDepth: 20` — matches the descendant-traversal cap elsewhere; bounds even pathological nests.
+
+After the aggregate, JS sorts ancestors by **descending depth** so the array reads root-first. Root directories return `ancestors: []` because `parentDirId === null` and the graph traversal yields nothing.
 
 ## 🚀 Performance & Scalability Considerations
 
@@ -59,15 +120,29 @@ The Directory retrieval logic adheres to the Controller-Service pattern, with au
 
 All read queries append `.lean()`, which returns plain JavaScript objects instead of Mongoose documents. This avoids hydrating change-tracking internals, virtuals, and prototype methods — reducing memory per document and improving JSON serialization speed.
 
-### 2. Concurrent Child Fetching
+### 2. Concurrent Top-Level Batch
 
-`Promise.all([File.find(...), Directory.find(...)])` executes both queries in parallel against MongoDB, cutting response latency compared to sequential awaits.
+The four operations at the top of `getDirectory` (direct files, direct children, recursive stats, ancestors) run in parallel via `Promise.all`. Wall-clock latency is dominated by the slowest single path, not the sum.
 
-### 3. Compound Indexes
+### 3. Per-Child Stats Fanout
+
+Each immediate child folder gets its own `getNestedSubtreeStats` call (2 DB queries) so its card carries its own recursive `fileCount` + `totalSize`. These run concurrently via `Promise.all` over `childDirs.map(...)`.
+
+Total query count for a listing with N direct children is `2N + 6`:
+- 1 — top-level `Directory.findOne`
+- 1 — direct files (`File.find`)
+- 1 — direct children (`Directory.find`)
+- 2 — `getNestedSubtreeStats` for the requested directory (graphLookup + File.find)
+- 1 — `getAncestors` (single aggregate)
+- 2N — `getNestedSubtreeStats` per child folder
+
+Wall time is roughly one round-trip of work because everything fans out in parallel and Mongo's default connection pool of 100 covers typical N. A folder with 1000+ direct children would queue queries — flagged for a future `p-limit` cap or pagination.
+
+### 4. Compound Indexes
 
 Both `Directory` and `File` models define a compound index on `{ parentDirId: 1, userId: 1 }`. This directly supports the child-fetching queries in `getDirectory`, enabling index-only lookups instead of collection scans as data grows.
 
-### 4. Unbounded Query Pagination (Pending)
+### 5. Unbounded Query Pagination (Pending)
 
 The current `.find()` calls return all children in a single response. For directories with thousands of files, pagination via `.limit()` and `.skip()` (or cursor-based) will be needed to prevent memory exhaustion and response timeouts.
 

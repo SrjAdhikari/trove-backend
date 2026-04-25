@@ -10,7 +10,7 @@ Please navigate to the specific domain you need below:
 - [`oauth-multi-provider.md`](./architecture/oauth-multi-provider.md) - Shared OAuth sign-in helper, provider-specific divergences, and account-takeover guards.
 - [`transaction-patterns.md`](./architecture/transaction-patterns.md) - Atomic User+Directory creation, why Session.create runs outside the transaction, Mongoose mechanics.
 - [`email-template-system.md`](./architecture/email-template-system.md) - Transactional email composition model, brand tokens, client-compatibility rules.
-- [`drive-import.md`](./architecture/drive-import.md) - Design for the Google Drive import feature (pre-implementation).
+- [`drive-import.md`](./architecture/drive-import.md) - As-built design for the Google Drive import feature (`POST /api/drive/import`).
 
 ### 📂 [Authentication](./authentication)
 
