@@ -1,7 +1,7 @@
 //* src/services/drive.service.js
 
 import path from "node:path";
-import { Readable, Transform } from "node:stream";
+import { Readable } from "node:stream";
 
 import { uploadFile } from "./file.service.js";
 import { createDirectory } from "./directory.service.js";
@@ -13,6 +13,8 @@ import {
 	listDriveFolderChildren,
 	GOOGLE_APPS_EXPORT_MAP,
 } from "../lib/googleDrive.js";
+
+import createByteCounter from "../utils/byteCounter.js";
 
 import httpStatus from "../constants/httpStatus.js";
 import appErrorCode from "../constants/appErrorCode.js";
@@ -75,29 +77,6 @@ const sanitizeFileName = (name, fallbackExt = "") => {
 	if (clean.length > 255) clean = clean.slice(0, 255);
 
 	return clean;
-};
-
-/**
- * Counts bytes passing through and aborts the pipeline when either the per-file
- * cap or the remaining aggregate budget is exceeded. Used for Google-native
- * exports where pre-flight `size` is unavailable. The `state` object lets the
- * caller distinguish a size-cap trip from a generic upload failure.
- */
-const createByteCounter = (perFileCap, remainingBudget) => {
-	const state = { bytes: 0, tripped: false };
-
-	const stream = new Transform({
-		transform(chunk, _enc, cb) {
-			state.bytes += chunk.length;
-			if (state.bytes > perFileCap || state.bytes > remainingBudget) {
-				state.tripped = true;
-				return cb(new Error("byte cap exceeded"));
-			}
-			cb(null, chunk);
-		},
-	});
-
-	return { stream, state };
 };
 
 /**
