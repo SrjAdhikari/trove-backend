@@ -1,6 +1,6 @@
 # Database Schema
 
-> **Status:** As-built (2026-04-23). Mirrors `src/models/*` and `src/schemas/*`. Refresh when a model is added, a field is renamed, or an index changes.
+> **Status:** As-built (2026-04-25). Mirrors `src/models/*` and `src/schemas/*`. Refresh when a model is added, a field is renamed, or an index changes.
 
 The TroveCloud backend runs on MongoDB via Mongoose. This doc is a single place to look up every collection, its fields, its indexes, and how the collections link to each other. The code in `src/models/` is the source of truth — if this document ever drifts from the models, the models win.
 
@@ -117,6 +117,7 @@ Source: `src/models/file.model.js`. Atlas mirror: `src/schemas/files.schema.js`.
 | ----------------------- | -------- | -------- | ------- | ----------------------------------------------- |
 | `name`                  | String   | yes      | —       | `trim`, `minlength: 3`. No max enforced yet     |
 | `extension`             | String   | yes      | —       | `trim`, `lowercase`. Stored separately          |
+| `size`                  | Number   | yes      | —       | Bytes. `min: 0`. Set by the byte counter inside `uploadFile` (PR #22). Source for `file.size` in API responses and for recursive `totalSize` in directory listings. |
 | `parentDirId`           | ObjectId | yes      | —       | The containing directory                        |
 | `userId`                | ObjectId | yes      | —       | Owning user (denormalized for cheap auth)       |
 | `createdAt`/`updatedAt` | Date     | —        | —       | Via `timestamps: true`                          |

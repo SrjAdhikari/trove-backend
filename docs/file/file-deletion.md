@@ -43,6 +43,7 @@ The File deletion logic adheres to the Controller-Service pattern, with authenti
       "_id": "...",
       "name": "report.pdf",
       "extension": ".pdf",
+      "size": 2457600,
       "parentDirId": "...",
       "userId": "...",
       "createdAt": "...",

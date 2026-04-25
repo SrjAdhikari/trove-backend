@@ -27,7 +27,7 @@ The Directory deletion logic adheres to the Controller-Service pattern, with aut
   4. Returns the deleted directory document.
 
 - **Service Logic (`deleteDirectory`):**
-  1. Calls `getAllNestedDirectories(userId, directoryId)` to fetch the target directory and all nested subdirectories via `$graphLookup` aggregation.
+  1. Calls `getAllNestedDirectories(directoryId, userId)` to fetch the target directory and all nested subdirectories via `$graphLookup` aggregation.
   2. If no document matches, throws `AppError` with `NOT_FOUND` and `DIRECTORY_NOT_FOUND`.
   3. **Edge Case Handled:** If the target directory has no `parentDirId` (i.e., it's the root directory), throws `AppError` with `BAD_REQUEST` and `DIRECTORY_DELETE_FAILED`. Root directories are permanent and cannot be deleted.
   4. Collects all directory IDs (target + nested) into `allDirIds`.
