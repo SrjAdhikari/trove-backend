@@ -8,14 +8,22 @@ import { pipeline } from "node:stream/promises";
 import File from "../models/file.model.js";
 import Directory from "../models/directory.model.js";
 
+import createByteCounter from "../utils/byteCounter.js";
+
 import httpStatus from "../constants/httpStatus.js";
 import appErrorCode from "../constants/appErrorCode.js";
 import AppError from "../errors/AppError.js";
 
-const { NOT_FOUND, INTERNAL_SERVER_ERROR } = httpStatus;
-const { FILE_NOT_FOUND, DIRECTORY_NOT_FOUND, FILE_UPLOAD_FAILED } =
-	appErrorCode;
+const { NOT_FOUND, BAD_REQUEST, INTERNAL_SERVER_ERROR } = httpStatus;
+const {
+	FILE_NOT_FOUND,
+	DIRECTORY_NOT_FOUND,
+	FILE_UPLOAD_FAILED,
+	FILE_TOO_LARGE,
+} = appErrorCode;
+
 const STORAGE_ROOT = path.resolve(import.meta.dirname, "../../storage");
+const MAX_UPLOAD_SIZE_BYTES = 100 * 1024 * 1024;
 
 /**
  * Retrieves a file document and its physical storage path.
@@ -70,27 +78,43 @@ const uploadFile = async (parentDirId, userId, fileName, fileStream) => {
 	const file = await File.create({
 		name: fileName,
 		extension,
+		size: 0,
 		parentDirId: parentDir._id,
 		userId,
 	});
 
 	const filePath = path.join(STORAGE_ROOT, `${file._id}${extension}`);
 
+	// Count bytes mid-stream so we can both persist the size and enforce the cap
+	const counter = createByteCounter(MAX_UPLOAD_SIZE_BYTES);
+
 	// Stream file data to disk; pipeline handles backpressure and error propagation
 	try {
-		await pipeline(fileStream, createWriteStream(filePath));
+		await pipeline(fileStream, counter.stream, createWriteStream(filePath));
 	} catch (error) {
 		// Roll back: remove the orphaned DB record and any partial file on disk
-		await Promise.all([
+		await Promise.allSettled([
 			File.deleteOne({ _id: file._id }),
 			rm(filePath, { force: true }),
 		]);
+
+		if (counter.state.tripped) {
+			throw new AppError(
+				"File exceeds upload size cap",
+				BAD_REQUEST,
+				FILE_TOO_LARGE,
+			);
+		}
+
 		throw new AppError(
 			"Failed to upload file",
 			INTERNAL_SERVER_ERROR,
 			FILE_UPLOAD_FAILED,
 		);
 	}
+
+	file.size = counter.state.bytes;
+	await file.save();
 
 	return file;
 };

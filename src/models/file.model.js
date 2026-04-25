@@ -17,6 +17,11 @@ const fileSchema = new Schema(
 			trim: true,
 			lowercase: true,
 		},
+		size: {
+			type: Number,
+			required: true,
+			min: 0,
+		},
 		parentDirId: {
 			type: Schema.Types.ObjectId,
 			ref: "Directory",

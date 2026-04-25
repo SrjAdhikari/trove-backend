@@ -3,7 +3,7 @@
 const fileSchema = {
 	$jsonSchema: {
 		bsonType: "object",
-		required: ["_id", "extension", "name", "parentDirId", "userId"],
+		required: ["_id", "extension", "name", "parentDirId", "size", "userId"],
 		properties: {
 			_id: {
 				bsonType: "objectId",
@@ -23,6 +23,11 @@ const fileSchema = {
 				bsonType: "objectId",
 				description:
 					"File parentDirId must be a valid ObjectId referencing the parent directory",
+			},
+			size: {
+				bsonType: "number",
+				minimum: 0,
+				description: "File size in bytes, populated during upload",
 			},
 			userId: {
 				bsonType: "objectId",
