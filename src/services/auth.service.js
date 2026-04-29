@@ -254,13 +254,23 @@ const resetPassword = async (email, otp, newPassword) => {
 		throw new AppError("Invalid OTP", BAD_REQUEST, INVALID_OTP);
 	}
 
-	user.password = newPassword;
-	user.otp = undefined;
-	user.otpExpiresAt = undefined;
-	await user.save();
+	const session = await mongoose.startSession();
 
-	// Force re-login on every device to ensure security
-	await Session.deleteMany({ userId: user._id });
+	// Run in a transaction: if the session wipe fails, the password change
+	// rolls back so the user can retry the reset cleanly with the same OTP
+	// instead of being left in a half-applied state.
+	try {
+		await session.withTransaction(async () => {
+			user.password = newPassword;
+			user.otp = undefined;
+			user.otpExpiresAt = undefined;
+
+			await user.save({ session });
+			await Session.deleteMany({ userId: user._id }, { session });
+		});
+	} finally {
+		await session.endSession();
+	}
 };
 
 /**
