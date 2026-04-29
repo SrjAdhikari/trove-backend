@@ -9,6 +9,8 @@ import {
 	createUser,
 	verifyOTP,
 	resendOTP,
+	forgotPassword,
+	resetPassword,
 	loginUser,
 	loginOrCreateGoogleUser,
 	loginOrCreateGithubUser,
@@ -76,6 +78,40 @@ const resendOTPHandler = async (req, res) => {
 	res.status(OK).json({
 		success: true,
 		message: "Verification code resent to your email address",
+	});
+};
+
+const forgotPasswordHandler = async (req, res) => {
+	const { email } = req.body ?? {};
+
+	if (!email) {
+		throw new AppError("Email is required", BAD_REQUEST, EMAIL_REQUIRED);
+	}
+
+	await forgotPassword(email);
+
+	res.status(OK).json({
+		success: true,
+		message: "Password reset code sent to your email",
+	});
+};
+
+const resetPasswordHandler = async (req, res) => {
+	const { email, otp, newPassword } = req.body ?? {};
+
+	if (!email || !otp || !newPassword) {
+		throw new AppError(
+			"All fields are required",
+			BAD_REQUEST,
+			ALL_FIELDS_REQUIRED,
+		);
+	}
+
+	await resetPassword(email, otp, newPassword);
+
+	res.status(OK).json({
+		success: true,
+		message: "Password reset successfully",
 	});
 };
 
@@ -177,6 +213,8 @@ export {
 	registerHandler,
 	verifyOTPHandler,
 	resendOTPHandler,
+	forgotPasswordHandler,
+	resetPasswordHandler,
 	loginHandler,
 	logoutHandler,
 	logoutAllHandler,

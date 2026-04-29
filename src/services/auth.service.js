@@ -23,6 +23,8 @@ import {
 	generateOTP,
 	isValidOTP,
 	sendOTP,
+	sendPasswordResetOTP,
+	issueOTPToUser,
 	isOTPExpired,
 	isOTPCooldownActive,
 } from "./otp.service.js";
@@ -169,13 +171,96 @@ const resendOTP = async (email) => {
 		);
 	}
 
-	const { plainOTP, hashedOTP } = generateOTP();
+	const plainOTP = await issueOTPToUser(user);
+	await sendOTP(user.name, email, plainOTP);
+};
 
-	user.otp = hashedOTP;
-	user.otpExpiresAt = tenMinutesFromNow();
+/**
+ * Issues a password reset OTP to a verified email-provider user.
+ * Reuses the User document's `otp` / `otpExpiresAt` fields (idle once a user
+ * is verified) instead of adding parallel reset-specific fields.
+ *
+ * @param {string} email - The user's email address
+ * @throws {AppError} If the user is missing/unverified, signed in via OAuth, or the cooldown is active
+ */
+const forgotPassword = async (email) => {
+	const user = await User.findOne({ email, isVerified: true }).select(
+		"+otpExpiresAt",
+	);
+
+	if (!user) {
+		throw new AppError("User not found", NOT_FOUND, USER_NOT_FOUND);
+	}
+
+	// OAuth-provisioned users have no password — sending a reset code would be
+	// useless and confusing. Steer them to their actual sign-in method.
+	if (user.provider !== "email") {
+		throw new AppError(
+			`Please sign in with ${user.provider}`,
+			BAD_REQUEST,
+			PROVIDER_MISMATCH,
+		);
+	}
+
+	if (isOTPCooldownActive(user.otpExpiresAt, ONE_MINUTE_MS)) {
+		throw new AppError(
+			"Please wait before requesting a new OTP",
+			TOO_MANY_REQUESTS,
+			OTP_COOLDOWN,
+		);
+	}
+
+	const plainOTP = await issueOTPToUser(user);
+	await sendPasswordResetOTP(user.name, email, plainOTP);
+};
+
+/**
+ * Verifies a password reset OTP and persists the new password.
+ *
+ * @NOTE: The Mongoose pre-save hook re-hashes the password;
+ * the schema's `minlength: 8` enforces strength (the global
+ * error handler maps the ValidationError to 422).
+ *
+ * @NOTE: All sessions are invalidated on success so an attacker who triggered
+ * the reset is logged out everywhere alongside the legitimate user.
+ *
+ * @param {string} email - The user's email address
+ * @param {string} otp - The raw 6-digit reset code
+ * @param {string} newPassword - The user's chosen new password
+ * @throws {AppError} If the user is missing/unverified, signed in via OAuth, or the OTP is invalid/expired
+ */
+const resetPassword = async (email, otp, newPassword) => {
+	const user = await User.findOne({ email, isVerified: true }).select(
+		"+otp +otpExpiresAt",
+	);
+
+	if (!user) {
+		throw new AppError("User not found", NOT_FOUND, USER_NOT_FOUND);
+	}
+
+	if (user.provider !== "email") {
+		throw new AppError(
+			`Please sign in with ${user.provider}`,
+			BAD_REQUEST,
+			PROVIDER_MISMATCH,
+		);
+	}
+
+	if (isOTPExpired(user.otpExpiresAt)) {
+		throw new AppError("OTP has expired", BAD_REQUEST, OTP_EXPIRED);
+	}
+
+	if (!isValidOTP(otp, user.otp)) {
+		throw new AppError("Invalid OTP", BAD_REQUEST, INVALID_OTP);
+	}
+
+	user.password = newPassword;
+	user.otp = undefined;
+	user.otpExpiresAt = undefined;
 	await user.save();
 
-	await sendOTP(user.name, email, plainOTP);
+	// Force re-login on every device to ensure security
+	await Session.deleteMany({ userId: user._id });
 };
 
 /**
@@ -309,6 +394,8 @@ export {
 	createUser,
 	verifyOTP,
 	resendOTP,
+	forgotPassword,
+	resetPassword,
 	loginUser,
 	loginOrCreateGoogleUser,
 	loginOrCreateGithubUser,

@@ -2,8 +2,11 @@
 
 import crypto from "crypto";
 import sendEmail from "../lib/sendEmail.js";
-import { VERIFY_EMAIL_TEMPLATE } from "../templates/emails/index.js";
-import { TEN_MINUTES_MS } from "../utils/date.js";
+import {
+	VERIFY_EMAIL_TEMPLATE,
+	PASSWORD_RESET_EMAIL_TEMPLATE,
+} from "../templates/emails/index.js";
+import { TEN_MINUTES_MS, tenMinutesFromNow } from "../utils/date.js";
 
 /**
  * Generates a cryptic 6-digit OTP alongside a SHA-256 hashed version
@@ -35,7 +38,13 @@ const isValidOTP = (inputOTP, storedHash) => {
 	return crypto.timingSafeEqual(inputHash, stored);
 };
 
-// Function to send OTP to user's email
+/**
+ * Sends a verification OTP to the user's email
+ *
+ * @param {string} name - The user's name
+ * @param {string} email - The user's email address
+ * @param {string} otp - The 6-digit OTP
+ */
 const sendOTP = async (name, email, otp) => {
 	await sendEmail(
 		email,
@@ -44,17 +53,67 @@ const sendOTP = async (name, email, otp) => {
 	);
 };
 
-// Function to check if OTP has expired
+/**
+ * Sends a password reset OTP to the user's email
+ *
+ * @param {string} name - The user's name
+ * @param {string} email - The user's email address
+ * @param {string} otp - The 6-digit OTP
+ */
+const sendPasswordResetOTP = async (name, email, otp) => {
+	await sendEmail(
+		email,
+		"Reset your password",
+		PASSWORD_RESET_EMAIL_TEMPLATE(name, otp),
+	);
+};
+
+/**
+ * Generates a fresh OTP, persists the hash + 10-minute expiry on the user document.
+ *
+ * @param {Object} user - The user document to update
+ * @returns {Promise<string>} The plain OTP
+ */
+const issueOTPToUser = async (user) => {
+	const { plainOTP, hashedOTP } = generateOTP();
+
+	user.otp = hashedOTP;
+	user.otpExpiresAt = tenMinutesFromNow();
+	await user.save();
+
+	return plainOTP;
+};
+
+/**
+ * Checks if the OTP has expired
+ *
+ * @param {Date} otpExpiresAt - The expiry time of the OTP
+ * @returns {boolean} True if the OTP has expired
+ */
 const isOTPExpired = (otpExpiresAt) => {
 	if (!otpExpiresAt) return true;
 	return otpExpiresAt.getTime() < Date.now();
 };
 
-// Function to check if OTP cooldown is active
+/**
+ * Checks if the OTP cooldown is active
+ *
+ * @param {Date} otpExpiresAt - The expiry time of the OTP
+ * @param {number} cooldownMs - The cooldown duration in milliseconds
+ * @returns {boolean} True if the OTP cooldown is active
+ */
 const isOTPCooldownActive = (otpExpiresAt, cooldownMs) => {
 	if (!otpExpiresAt) return false;
 	const otpCreatedAt = otpExpiresAt.getTime() - TEN_MINUTES_MS;
 	return Date.now() - otpCreatedAt < cooldownMs;
 };
 
-export { generateOTP, isValidOTP, sendOTP, isOTPExpired, isOTPCooldownActive };
+export {
+	generateOTP,
+	isValidOTP,
+	sendOTP,
+	sendPasswordResetOTP,
+	issueOTPToUser,
+	isOTPExpired,
+	isOTPCooldownActive,
+};
