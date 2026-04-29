@@ -10,6 +10,8 @@ import {
 	registerHandler,
 	verifyOTPHandler,
 	resendOTPHandler,
+	forgotPasswordHandler,
+	resetPasswordHandler,
 	loginHandler,
 	logoutHandler,
 	logoutAllHandler,
@@ -38,6 +40,18 @@ authRouter.post("/register/verify-otp", verifyOTPHandler);
  * @route POST /api/auth/register/resend-otp
  */
 authRouter.post("/register/resend-otp", resendOTPHandler);
+
+/**
+ * Send password reset OTP to user's email
+ * @route POST /api/auth/forgot-password
+ */
+authRouter.post("/forgot-password", forgotPasswordHandler);
+
+/**
+ * Reset password using OTP
+ * @route POST /api/auth/reset-password
+ */
+authRouter.post("/reset-password", resetPasswordHandler);
 
 /**
  * Login a user
