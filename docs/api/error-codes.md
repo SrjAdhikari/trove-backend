@@ -1,6 +1,6 @@
 # Error Codes
 
-> **Status:** As-of 2026-04-25. This document is a glossary that drifts as the codebase evolves — refresh it when adding or removing codes from `src/constants/appErrorCode.js`.
+> **Status:** As-of 2026-04-30. This document is a glossary that drifts as the codebase evolves — refresh it when adding or removing codes from `src/constants/appErrorCode.js`.
 
 The TroveCloud backend returns structured errors with stable, machine-readable codes. The frontend consumes these codes to drive UI behavior (which form to redirect to, which message to show, when to retry). This document is the contract: the source of truth for what each code means and where it's thrown.
 
@@ -47,7 +47,7 @@ Sourced from `src/constants/appErrorCode.js` (an `Object.freeze`-ed enum). Liste
 | --------------------------- | ------------ | --------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
 | `GOOGLE_EMAIL_NOT_VERIFIED` | 400          | Google's ID-token payload reported `email_verified: false`.                       | `loginOrCreateGoogleUser` in `auth.service.js`                                                                                   |
 | `INVALID_CREDENTIALS`       | 401          | Email not found, or password didn't match.                                        | `loginUser` in `auth.service.js`                                                                                                 |
-| `PROVIDER_MISMATCH`         | 400 / 409    | Sign-in attempted with a method that doesn't match the account's stored provider. | `loginUser` (400, OAuth user trying password); `loginOrCreateOAuthUser` (409, OAuth attempt collides with non-matching provider) |
+| `PROVIDER_MISMATCH`         | 400 / 409    | Sign-in or reset attempted with a method that doesn't match the account's stored provider. | `loginUser`, `forgotPassword`, `resetPassword` (400, OAuth user trying password / reset); `loginOrCreateOAuthUser` (409, OAuth attempt collides with non-matching provider) |
 | `UNAUTHORIZED_ACCESS`       | 401          | No valid session cookie on a route that requires authentication.                  | `authenticate` middleware                                                                                                        |
 | `USER_NOT_VERIFIED`         | 400          | Login attempted on an account whose email-OTP was never confirmed.                | `loginUser` in `auth.service.js`                                                                                                 |
 
@@ -57,7 +57,7 @@ Sourced from `src/constants/appErrorCode.js` (an `Object.freeze`-ed enum). Liste
 | --------------------- | ------------ | ------------------------------------------------------------------- | ---------------------------------------------- |
 | `ACCESS_DENIED`       | 403          | Authenticated user attempted to access a resource they don't own.   | Service layer ownership checks                 |
 | `USER_ALREADY_EXISTS` | 409          | Registration attempted with an email that's already verified.       | `createUser`, `resendOTP` in `auth.service.js` |
-| `USER_NOT_FOUND`      | 404          | Lookup for a specific user (by email, in OTP / reset flows) failed. | `verifyOTP`, `resendOTP` in `auth.service.js`  |
+| `USER_NOT_FOUND`      | 404          | Lookup for a specific user (by email, in OTP / reset flows) failed. | `verifyOTP`, `resendOTP`, `forgotPassword`, `resetPassword` in `auth.service.js` |
 
 ### File
 
@@ -92,16 +92,16 @@ Sourced from `src/constants/appErrorCode.js` (an `Object.freeze`-ed enum). Liste
 | Code                | Typical HTTP | Meaning                                                                 | Where thrown                          |
 | ------------------- | ------------ | ----------------------------------------------------------------------- | ------------------------------------- |
 | `EMAIL_SEND_FAILED` | 500          | Resend API rejected the email (invalid recipient, network error, etc.). | `sendEmail` in `src/lib/sendEmail.js` |
-| `INVALID_OTP`       | 400          | Submitted OTP didn't match the stored hash.                             | `verifyOTP` in `auth.service.js`      |
-| `OTP_COOLDOWN`      | 429          | Resend OTP requested within the 60-second cooldown window.              | `resendOTP` in `auth.service.js`      |
-| `OTP_EXPIRED`       | 400          | Submitted OTP was correct but past its 10-minute lifetime.              | `verifyOTP` in `auth.service.js`      |
+| `INVALID_OTP`       | 400          | Submitted OTP didn't match the stored hash.                             | `verifyOTP`, `resetPassword` in `auth.service.js` |
+| `OTP_COOLDOWN`      | 429          | Resend OTP requested within the 60-second cooldown window.              | `resendOTP`, `forgotPassword` in `auth.service.js` |
+| `OTP_EXPIRED`       | 400          | Submitted OTP was correct but past its 10-minute lifetime, or the user has no pending OTP. | `verifyOTP`, `resetPassword` in `auth.service.js` |
 
 ### General
 
 | Code                  | Typical HTTP | Meaning                                                                                                       | Where thrown                                                       |
 | --------------------- | ------------ | ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| `ALL_FIELDS_REQUIRED` | 400          | Required body fields missing (legacy controllers using truthy checks).                                        | `registerHandler`, `verifyOTPHandler`, `loginHandler`              |
-| `EMAIL_REQUIRED`      | 400          | Specifically the `email` field is missing.                                                                    | `resendOTPHandler`                                                 |
+| `ALL_FIELDS_REQUIRED` | 400          | Required body fields missing (controllers using truthy checks).                                               | `registerHandler`, `verifyOTPHandler`, `loginHandler`, `resetPasswordHandler` |
+| `EMAIL_REQUIRED`      | 400          | Specifically the `email` field is missing.                                                                    | `resendOTPHandler`, `forgotPasswordHandler`                        |
 | `INTERNAL_ERROR`      | 500          | Catch-all for unexpected errors. Sets `isOperational: false` so the original message is hidden in production. | `globalErrorHandler` fallback when no other handler matches        |
 | `INVALID_INPUT`       | 400          | Body validation failed for a non-required-field reason (wrong type, out of range, malformed encoding).        | Various handlers (`directory.controller.js`, `file.controller.js`) |
 | `ROUTE_NOT_FOUND`     | 404          | Requested URL didn't match any registered route.                                                              | 404 handler in `app.js`                                            |

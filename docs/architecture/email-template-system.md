@@ -1,6 +1,6 @@
 # Email Template System
 
-> **Status:** As-built (2026-04-23). Reflects the structure introduced in PR #18.
+> **Status:** As-built (2026-04-30). Reflects the structure introduced in PR #18 and the password-reset wiring added in PR #25.
 
 Describes how transactional emails (OTP verification, password reset, security alerts, etc.) are composed and dispatched. Read this before adding a new email template, or when curious why a particular styling choice was made.
 
@@ -179,7 +179,7 @@ Patterns that work everywhere, and gotchas worth knowing:
 | Template                          | Wired? | Call site                                                                                  |
 | --------------------------------- | ------ | ------------------------------------------------------------------------------------------ |
 | `VERIFY_EMAIL_TEMPLATE`           | ✅     | `otp.service.js` `sendOTP` (register, resend)                                              |
-| `PASSWORD_RESET_EMAIL_TEMPLATE`   | ⏳     | No call site yet — awaits forgot-password feature                                          |
+| `PASSWORD_RESET_EMAIL_TEMPLATE`   | ✅     | `otp.service.js` `sendPasswordResetOTP` (forgot-password, since PR #25)                    |
 | `NEW_DEVICE_ALERT_EMAIL_TEMPLATE` | ⏳     | No call site yet — awaits new-device detection in `enforceDeviceLimit` or session creation |
 
 ### Required env vars (consumed by `sendEmail.js`, not the templates)
@@ -194,7 +194,6 @@ Hardcoded in `_base.js` `brand.logoUrl` as `https://assets.trovecloud.app/email/
 ### Deferred work tracked in memory
 
 - HTML escaping of user-supplied interpolations.
-- Wiring up `PASSWORD_RESET_EMAIL_TEMPLATE` (needs the forgot-password flow built first).
 - Wiring up `NEW_DEVICE_ALERT_EMAIL_TEMPLATE` (needs new-device detection logic in the session-creation path).
 
 ---

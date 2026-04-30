@@ -281,7 +281,7 @@ git remote prune origin
 
 ### Scopes commonly used
 
-For commit and PR scopes, the backend follows the folder layout described in `CLAUDE.md` §2:
+For commit and PR scopes, the backend follows the `src/` folder layout:
 
 ```
 constants, controllers, database, errors, lib, middlewares,

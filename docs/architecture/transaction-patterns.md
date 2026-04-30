@@ -1,8 +1,8 @@
 # Transaction Patterns
 
-> **Status:** As-built (2026-04-23). Documents the MongoDB transaction usage adopted in PRs #11 (Google OAuth) and #14 (shared OAuth helper), and used in `verifyOTP` since the original auth implementation.
+> **Status:** As-built (2026-04-30). Documents the MongoDB transaction usage adopted in PRs #11 (Google OAuth), #14 (shared OAuth helper), and #25 (password reset). Used in `verifyOTP` since the original auth implementation.
 
-Captures a subtle pattern that appears in two places in the codebase: when a sign-in flow needs to **atomically create a User + Directory pair** (and possibly mutate them), the database writes happen inside a `withTransaction` block, but the **Session creation happens outside the transaction**. This document explains why, and what to do if a third call site ever needs the same shape.
+Captures a subtle pattern that appears in three places in the codebase: when a flow needs to **atomically commit two or more cross-document writes** (User + Directory creation, User update + Session wipe), the database writes happen inside a `withTransaction` block. Where a flow also issues a `Session`, that **`Session.create` happens outside the transaction**. This document explains why, and what to do if a fourth call site ever needs the same shape.
 
 ---
 
@@ -84,7 +84,7 @@ The "transaction commits, Session.create fails" case is the only one with **part
 
 ## 📍 Where It's Used
 
-Two call sites in the codebase as of 2026-04-23:
+Three call sites in the codebase as of 2026-04-30:
 
 ### 1. `verifyOTP` in `src/services/auth.service.js`
 
@@ -94,7 +94,28 @@ When an unverified email-password user enters the correct OTP, the verification 
 
 When a Google or GitHub OAuth sign-in is the user's first interaction, both User and Directory are inserted via the pattern above. Then Session.create runs outside. Used for both providers via the shared helper.
 
-The two call sites are **structurally similar but not identical** — `verifyOTP` mutates an existing user, OAuth creates a fresh one. A premature abstraction extracting them into a single helper would have to branch on "create vs update" inside, which is exactly the kind of false-DRY that makes code worse. The pattern is documented; the two call sites stay separate.
+### 3. `resetPassword` in `src/services/auth.service.js`
+
+When a user submits a valid reset OTP, the password is updated AND every active session is wiped in one transaction:
+
+```js
+const session = await mongoose.startSession();
+try {
+    await session.withTransaction(async () => {
+        user.password = newPassword;
+        user.otp = undefined;
+        user.otpExpiresAt = undefined;
+        await user.save({ session });
+        await Session.deleteMany({ userId: user._id }, { session });
+    });
+} finally {
+    await session.endSession();
+}
+```
+
+If `Session.deleteMany` fails after `user.save`, the whole thing rolls back — the password change is reverted and the OTP fields stay populated, so the user can retry the same call cleanly with the same code. Without the transaction, a partial failure would leave the password updated but old sessions alive and the OTP consumed — a worse recovery story for the user. See PR #25 for the design discussion.
+
+The three call sites are **structurally similar but not identical** — `verifyOTP` and `resetPassword` mutate an existing user, OAuth creates a fresh one; only `resetPassword` touches a second collection. A premature abstraction extracting them into a single helper would have to branch on "create vs update" and "single vs cross-collection" inside, which is exactly the kind of false-DRY that makes code worse. The pattern is documented; the three call sites stay separate.
 
 ---
 
@@ -124,6 +145,7 @@ A few details worth knowing if you're new to MongoDB transactions in Mongoose:
 
 - `src/services/auth.service.js` — `verifyOTP` (since project inception)
 - `src/services/oauth.service.js` — `loginOrCreateOAuthUser` new-user branch (since PR #14, originally PR #11)
+- `src/services/auth.service.js` — `resetPassword` (since PR #25; password update + session wipe atomic)
 - `src/services/directory.service.js` — recursive directory delete (separate pattern; transaction wraps DB deletes, physical-file cleanup happens outside via `Promise.allSettled`)
 
 ### Deployment requirement
