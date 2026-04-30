@@ -1,6 +1,6 @@
 # Database Schema
 
-> **Status:** As-built (2026-04-25). Mirrors `src/models/*` and `src/schemas/*`. Refresh when a model is added, a field is renamed, or an index changes.
+> **Status:** As-built (2026-04-30). Mirrors `src/models/*` and `src/schemas/*`. Refresh when a model is added, a field is renamed, or an index changes.
 
 The TroveCloud backend runs on MongoDB via Mongoose. This doc is a single place to look up every collection, its fields, its indexes, and how the collections link to each other. The code in `src/models/` is the source of truth — if this document ever drifts from the models, the models win.
 
@@ -140,12 +140,13 @@ Sensitive fields are hardcoded with `select: false` at the schema level. The def
 | ----- | ------------------------------------------------------- |
 | User  | `password`, `otp`, `otpExpiresAt`, `verificationExpiresAt` |
 
-Queries don't return these unless explicitly re-selected via `.select("+fieldName")`. That override lives **in the service layer only** — never controllers, never middleware. Two call sites today:
+Queries don't return these unless explicitly re-selected via `.select("+fieldName")`. That override lives **in the service layer only** — never controllers, never middleware. Current call sites:
 
 - `loginUser` — `.select("+password")` to run bcrypt-compare.
-- `verifyOTP` / `resendOTP` — `.select("+otp +otpExpiresAt +verificationExpiresAt")` to validate against the stored OTP hash.
+- `verifyOTP` / `resendOTP` — `.select("+otp +otpExpiresAt +verificationExpiresAt")` to validate against the stored registration OTP hash.
+- `forgotPassword` / `resetPassword` — `.select("+otpExpiresAt")` (forgot, for the cooldown check) and `.select("+otp +otpExpiresAt")` (reset, for hash verification). Reuses the same `otp` / `otpExpiresAt` fields as registration; valid because verified users have those fields cleared by `verifyOTP`'s transaction. See `docs/authentication/password-reset.md` for why.
 
-This pattern is documented in `CLAUDE.md §7` as "Security by Default". Adding a new sensitive field means adding `select: false` at the schema level, not relying on service-layer discipline.
+This is the project's **Security by Default** rule — adding a new sensitive field means adding `select: false` at the schema level, not relying on service-layer discipline.
 
 ---
 

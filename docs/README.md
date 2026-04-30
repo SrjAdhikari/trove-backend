@@ -17,7 +17,7 @@ Please navigate to the specific domain you need below:
 - [`registration-flow.md`](./authentication/registration-flow.md) - User registration via email + OTP, plus Google and GitHub OAuth alternative paths.
 - [`login-and-sessions.md`](./authentication/login-and-sessions.md) - Session issuance for email/password login, Google OAuth, and GitHub OAuth sign-in, the identity-provider model, and cookie-based session strategy.
 - [`logout-flow.md`](./authentication/logout-flow.md) - Single-device and global logout, provider-agnostic session destruction.
-- `password-reset.md` - Forget password logic _(not yet implemented)_.
+- [`password-reset.md`](./authentication/password-reset.md) - Forgot password and reset password flow (OTP-based, reuses User OTP fields, atomic password update + session wipe).
 
 ### 📂 [Workflow](./workflow)
 
