@@ -33,8 +33,8 @@ const SHORTCUT_MIME = "application/vnd.google-apps.shortcut";
 const GOOGLE_APPS_PREFIX = "application/vnd.google-apps.";
 
 // Conservative caps; tune later if real usage warrants it.
-const PER_FILE_CAP_BYTES = 100 * 1024 * 1024;
-const AGGREGATE_CAP_BYTES = 500 * 1024 * 1024;
+const PER_FILE_CAP_BYTES = 100 * 1000 * 1000;
+const AGGREGATE_CAP_BYTES = 500 * 1000 * 1000;
 const MAX_DEPTH = 20;
 
 /**
@@ -217,11 +217,12 @@ const importItem = async (
 		return;
 	}
 
+	let meta;
+
 	try {
 		// Client-supplied mimeType from the Picker is spoofable; re-fetch for top-level.
 		// Children come from our own list call and are already trustworthy.
-		const meta =
-			knownMeta ?? (await getDriveFileMetadata(ctx.accessToken, driveId));
+		meta = knownMeta ?? (await getDriveFileMetadata(ctx.accessToken, driveId));
 
 		// Check if the file is trashed, if so, add it to the failed list and return
 		if (meta.trashed) {
@@ -325,7 +326,7 @@ const importItem = async (
 				: DRIVE_IMPORT_FAILED;
 		ctx.failed.push({
 			driveId,
-			name: knownMeta?.name ?? null,
+			name: meta?.name ?? knownMeta?.name ?? null,
 			reason,
 		});
 	}
@@ -337,7 +338,7 @@ const importItem = async (
  * unless the controller-layer input validation fails.
  *
  * @param {string} userId
- * @param {string} accessToken - Short-lived Drive token (scope: drive.file).
+ * @param {string} accessToken - Short-lived Drive token (scope: drive.readonly).
  * @param {Array<{id:string, mimeType:string, name?:string}>} items
  * @param {string} parentDirId - Resolved target directory (controller defaults to user.rootDirId).
  * @returns {Promise<{imported:Array, failed:Array}>}
