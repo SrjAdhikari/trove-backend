@@ -6,8 +6,8 @@ import httpStatus from "../constants/httpStatus.js";
 import appErrorCode from "../constants/appErrorCode.js";
 import { clearAuthCookie } from "../utils/cookies.js";
 
-const { UNAUTHORIZED } = httpStatus;
-const { UNAUTHORIZED_ACCESS } = appErrorCode;
+const { UNAUTHORIZED, FORBIDDEN } = httpStatus;
+const { UNAUTHORIZED_ACCESS, ACCOUNT_SUSPENDED } = appErrorCode;
 
 /**
  * Global authentication middleware to protect secured routes.
@@ -15,7 +15,8 @@ const { UNAUTHORIZED_ACCESS } = appErrorCode;
  * @param {import("express").Request} req - Express request object.
  * @param {import("express").Response} res - Express response object.
  * @param {import("express").NextFunction} next - Express next middleware function.
- * @throws {AppError} - If the session token is missing, naturally expired, or the user was deleted.
+ * @throws {AppError} - If the session token is missing, naturally expired,
+ * the user was deleted/soft-deleted, or the account is suspended.
  */
 const authenticate = async (req, res, next) => {
 	const sessionId = req.signedCookies.token;
@@ -40,6 +41,27 @@ const authenticate = async (req, res, next) => {
 			"Invalid or expired session",
 			UNAUTHORIZED,
 			UNAUTHORIZED_ACCESS,
+		);
+	}
+
+	// Soft-deleted user — surface as a generic unauthorized so account existence is not leaked.
+	// Order matters: deletion takes precedence over suspension.
+	if (session.userId.deletedAt) {
+		clearAuthCookie(res);
+		throw new AppError(
+			"Account no longer exists",
+			UNAUTHORIZED,
+			UNAUTHORIZED_ACCESS,
+		);
+	}
+
+	// Suspended user — explicit, distinct error so the client can render a tailored message.
+	if (session.userId.suspendedAt) {
+		clearAuthCookie(res);
+		throw new AppError(
+			"Account is suspended",
+			FORBIDDEN,
+			ACCOUNT_SUSPENDED,
 		);
 	}
 

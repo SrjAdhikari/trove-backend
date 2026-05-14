@@ -3,6 +3,8 @@
 import mongoose from "mongoose";
 import bcrypt from "bcrypt";
 
+import { ROLES } from "../constants/roles.js";
+
 const { Schema, model } = mongoose;
 const userSchema = new Schema(
 	{
@@ -57,6 +59,27 @@ const userSchema = new Schema(
 		verificationExpiresAt: {
 			type: Date,
 			select: false,
+		},
+		role: {
+			type: String,
+			enum: Object.values(ROLES),
+			default: ROLES.USER,
+			index: true,
+		},
+		suspendedAt: {
+			type: Date,
+			default: null,
+			index: true,
+		},
+		suspendedBy: {
+			type: Schema.Types.ObjectId,
+			ref: "User",
+			default: null,
+		},
+		deletedAt: {
+			type: Date,
+			default: null,
+			index: true,
 		},
 	},
 	{
