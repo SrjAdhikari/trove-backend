@@ -6,7 +6,8 @@
 	"type": "module",
 	"scripts": {
 		"dev": "node --watch server.js",
-		"start": "node server.js"
+		"start": "node server.js",
+		"seed:superadmin": "node scripts/seed-superadmin.js"
 	},
 	"repository": {
 		"type": "git",
