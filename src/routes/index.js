@@ -10,6 +10,7 @@ import authRouter from "./auth.routes.js";
 import directoryRouter from "./directory.routes.js";
 import fileRouter from "./file.routes.js";
 import driveRouter from "./drive.routes.js";
+import adminRouter from "./admin/index.js";
 
 const router = Router();
 
@@ -36,5 +37,11 @@ router.use("/files", fileRouter);
  * @route /api/drive
  */
 router.use("/drive", driveRouter);
+
+/**
+ * Admin routes
+ * @route /api/admin
+ */
+router.use("/admin", adminRouter);
 
 export default router;
