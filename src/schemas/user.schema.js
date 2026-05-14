@@ -51,6 +51,25 @@ const userSchema = {
 			verificationExpiresAt: {
 				bsonType: "date",
 			},
+			role: {
+				bsonType: "string",
+				enum: ["user", "admin", "superadmin"],
+				description:
+					"Role must be one of user, admin, or superadmin",
+			},
+			suspendedAt: {
+				bsonType: ["date", "null"],
+				description: "Timestamp the user was suspended, or null",
+			},
+			suspendedBy: {
+				bsonType: ["objectId", "null"],
+				description:
+					"ObjectId of the admin who suspended this user, or null",
+			},
+			deletedAt: {
+				bsonType: ["date", "null"],
+				description: "Soft-delete timestamp, or null",
+			},
 			createdAt: {
 				bsonType: "date",
 			},
