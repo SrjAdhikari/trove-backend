@@ -6,7 +6,7 @@
 
 Trove currently has no concept of privileged users. Every authenticated request is treated identically and ownership is enforced per-resource via `{ _id, userId }` query filters in the service layer. There are no admin endpoints, no role field on `User`, and no audit log.
 
-This subsystem introduces **Role-Based Access Control (RBAC)** with three roles (`user | admin | superadmin`) and the first set of admin endpoints needed to operate the platform: list users, view details, force-logout, suspend/unsuspend, change roles, soft- and hard-delete, and a system overview dashboard. An admin audit log is deliberately **not** part of v1; see "Out of scope" for the rationale.
+This subsystem introduces **Role-Based Access Control (RBAC)** with three roles (`user | admin | superadmin`) and the first set of admin endpoints needed to operate the platform: list users, view details, force-logout, suspend/unsuspend, change roles, soft-delete + restore, hard-delete, and a system overview dashboard. An admin audit log is deliberately **not** part of v1; see "Out of scope" for the rationale.
 
 The intent is to lay the **foundation** for future admin tooling cleanly — extending the role enum, adding new admin endpoints, or migrating to fine-grained permissions later should all be small follow-ups, not rewrites.
 
@@ -17,7 +17,7 @@ The intent is to lay the **foundation** for future admin tooling cleanly — ext
 **In scope (v1):**
 - Role field on `User` with hierarchy: `superadmin > admin > user`
 - Suspension state on `User` tracked via `suspendedAt` / `suspendedBy` timestamps (status is derived, not stored)
-- 9 admin endpoints under `/api/admin/*`
+- 10 admin endpoints under `/api/admin/*`
 - CLI seed script to create the first superadmin
 - `authorize` middleware (role-aware) layered on top of existing `authenticate`
 - `authenticate` middleware updated to reject suspended and soft-deleted users (`suspendedAt`/`deletedAt` checks); the populated `req.user` carries `role`/`suspendedAt`/`deletedAt` automatically
@@ -205,6 +205,18 @@ Hard delete. Irreversible. Removes user + all their data from DB and disk.
   2. **After commit:** delete the user's physical files from disk via the existing file-deletion utility used by `file.service.js`. If disk delete fails: log a warning, leave orphans for manual cleanup (DB is source of truth).
 - **Response:** `{ filesDeleted, directoriesDeleted, bytesFreed }` (tallied during the transaction so the response itself gives the admin a confirmation of what was wiped).
 
+### `POST /api/admin/users/:id/restore`
+Reverse a soft-delete. Mirror image of `DELETE /admin/users/:id/soft-delete`.
+- **Pre-checks:**
+  1. Target is currently soft-deleted (`deletedAt != null`) — else 400 `INVALID_INPUT` ("user is not deleted").
+  2. Caller role **strictly greater than** target role (admin can't restore an admin; only superadmin can). Hierarchy is enforced even though the target is in a soft-deleted state — once they come back, the hierarchy will apply normally.
+  3. Self-check is skipped: a soft-deleted user can't authenticate (`authenticate` rejects them before reaching this route), so they can't be the caller. No CANNOT_ACT_ON_SELF possible here.
+- **Side effects:**
+  - Set `deletedAt = null`.
+  - **Do NOT** auto-clear `suspendedAt`. If the user was suspended before being soft-deleted, they come back suspended — never silently grant access. Admin can call unsuspend separately.
+  - **Do NOT** restore sessions. The user must log in fresh.
+- **Response:** the restored user document plus the derived `status` field (will be `"suspended"` or `"active"` depending on `suspendedAt`).
+
 ---
 
 ## Middleware
@@ -345,6 +357,7 @@ Both PRs target `develop`. Branch: `feat/rbac-admin-v1`.
 3. `POST /admin/users/:id/logout`.
 4. `DELETE /admin/users/:id/soft-delete` (soft).
 5. `DELETE /admin/users/:id/hard-delete` (transaction + disk cleanup).
+6. `POST /admin/users/:id/restore` (clear `deletedAt`; preserve `suspendedAt`).
 
 ---
 
@@ -381,6 +394,8 @@ Both PRs target `develop`. Branch: `feat/rbac-admin-v1`.
 - Force-logout a user → confirm sessions count returned matches DB.
 - Soft-delete a user → confirm `deletedAt` set, login blocked; files still on disk.
 - Hard-delete a user with at least 1 file + 1 directory → confirm User/File/Directory/Session docs gone, disk files gone, response payload tallies match.
+- Soft-delete a user, then restore them → confirm `deletedAt` cleared, user can log in again. If they were also suspended before deletion, confirm `suspendedAt` is preserved and they are still locked out until unsuspended.
+- Try to restore a user who is not soft-deleted → 400 `INVALID_INPUT`.
 - Try to demote the only superadmin → 403 `LAST_SUPERADMIN`.
 - Try to suspend self → 403 `CANNOT_ACT_ON_SELF`.
 - As admin (not superadmin), try to suspend another admin → 403 `CANNOT_ACT_ON_PEER`.
