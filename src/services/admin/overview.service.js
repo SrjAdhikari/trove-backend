@@ -37,9 +37,9 @@ const getSystemOverview = async () => {
 		User.countDocuments({ suspendedAt: null, deletedAt: null }),
 		User.countDocuments({ suspendedAt: { $ne: null }, deletedAt: null }),
 		User.countDocuments({ deletedAt: { $ne: null } }),
-		User.countDocuments({ role: ROLES.USER }),
-		User.countDocuments({ role: ROLES.ADMIN }),
-		User.countDocuments({ role: ROLES.SUPERADMIN }),
+		User.countDocuments({ role: ROLES.USER, deletedAt: null }),
+		User.countDocuments({ role: ROLES.ADMIN, deletedAt: null }),
+		User.countDocuments({ role: ROLES.SUPERADMIN, deletedAt: null }),
 		File.aggregate([
 			{
 				$group: {

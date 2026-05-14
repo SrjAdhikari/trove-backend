@@ -164,6 +164,7 @@ Each `users.*` count is computed from timestamps, not a stored status field:
 - `users.active`      = `countDocuments({ suspendedAt: null, deletedAt: null })`
 - `users.suspended`   = `countDocuments({ suspendedAt: { $ne: null }, deletedAt: null })`
 - `users.softDeleted` = `countDocuments({ deletedAt: { $ne: null } })`
+- `users.byRole.<role>` = `countDocuments({ role: <role>, deletedAt: null })` — counts users with the given role **excluding soft-deleted**. Suspended users are still counted. Sum of `byRole.*` equals `total − softDeleted` (i.e. `active + suspended`). This matches the operational reading of "how many admins/superadmins exist on the platform right now?" and the population PR 2's last-superadmin guard counts against.
 
 ### `PATCH /api/admin/users/:id/role` — **superadmin only**
 - **Body:** `{ role: 'user' | 'admin' | 'superadmin' }`.
