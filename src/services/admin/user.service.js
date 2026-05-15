@@ -280,8 +280,6 @@ const suspendUser = async (caller, targetId) => {
 	assertNotSelf(caller._id, targetId);
 
 	const user = await findUserById(targetId);
-	assertCanActOn(caller, user);
-
 	if (user.deletedAt) {
 		throw new AppError(
 			"Cannot suspend a deleted user",
@@ -293,6 +291,8 @@ const suspendUser = async (caller, targetId) => {
 	if (user.suspendedAt) {
 		throw new AppError("User is already suspended", BAD_REQUEST, INVALID_INPUT);
 	}
+
+	assertCanActOn(caller, user);
 
 	const mongooseSession = await mongoose.startSession();
 	try {
@@ -322,8 +322,6 @@ const suspendUser = async (caller, targetId) => {
  */
 const unsuspendUser = async (caller, targetId) => {
 	const user = await findUserById(targetId);
-	assertCanActOn(caller, user);
-
 	if (user.deletedAt) {
 		throw new AppError(
 			"Cannot unsuspend a deleted user",
@@ -335,6 +333,8 @@ const unsuspendUser = async (caller, targetId) => {
 	if (!user.suspendedAt) {
 		throw new AppError("User is not suspended", BAD_REQUEST, INVALID_INPUT);
 	}
+
+	assertCanActOn(caller, user);
 
 	user.suspendedAt = null;
 	user.suspendedBy = null;
@@ -384,11 +384,11 @@ const softDeleteUser = async (caller, targetId) => {
 	assertNotSelf(caller._id, targetId);
 
 	const user = await findUserById(targetId);
-	assertCanActOn(caller, user);
-
 	if (user.deletedAt) {
 		throw new AppError("User is already deleted", BAD_REQUEST, INVALID_INPUT);
 	}
+
+	assertCanActOn(caller, user);
 
 	const mongooseSession = await mongoose.startSession();
 	try {
