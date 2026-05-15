@@ -44,8 +44,9 @@ The intent is to lay the **foundation** for future admin tooling cleanly — ext
 | Bootstrap | One-time CLI seed script: `npm run seed:superadmin -- --email=x@y.com` | SaaS-deploy pattern. Explicit, auditable, no runtime cost, idempotent. |
 | Suspend semantics | Block new logins **and** revoke all active sessions immediately | Industry standard (Slack/Linear-style). Suspended user is fully locked out. |
 | Self-action rules | Cannot suspend/demote/soft-delete/purge **self**. Force-logout self is allowed (harmless). | Prevents accidental self-lockout. |
-| Last-superadmin guard | Demote / delete / purge that would leave zero superadmins → 403 | Prevents bricking the platform. |
-| Hierarchy enforcement | Admins cannot act on other admins or superadmins; only superadmin can act on admins. Both can act on regular users. | Limits admin blast radius. |
+| Single-role topology | This deployment runs exactly **one** superadmin and **one** admin (operational invariant, not code-enforced). | Lets the service layer skip multi-superadmin defenses (last-superadmin count guard, TOCTOU race transactions) that would otherwise add complexity for scenarios that can't arise. If multiple superadmins are ever introduced, re-add the count guard at the time. |
+| v1 privilege split | **Reads + force-logout: `admin` & `superadmin`. All mutations (role / suspend / unsuspend / soft-delete / hard-delete / restore): `superadmin` only.** | Conservative v1 posture: admins get visibility and the ability to punt active sessions; only superadmins can permanently alter account state. Service-layer `assertCanActOn` remains the second line of defense if the route gates are ever loosened. |
+| Hierarchy enforcement (service layer) | Caller must outrank target. Same-rank or higher target → `CANNOT_ACT_ON_PEER`. Enforced in services even when the route gate already restricts the caller, so a future relaxation of route gates can't quietly grant peer-on-peer actions. | Defense in depth. |
 | Hard-delete cascade | Wipe `User`, `File`, `Directory`, `Session` (DB) + physical disk files. | Irreversible by design — this is the only place admin-driven disk space is freed. |
 | Code organization | `src/routes/admin/`, `src/controllers/admin/`, `src/services/admin/` | Mirrors existing layer discipline; isolates admin surface for future review/permission tightening. |
 
@@ -126,7 +127,24 @@ Single source of truth — the timestamps. Status is computed on the fly for API
 
 ## Endpoint specifications
 
-All admin routes are mounted under `/api/admin`, require `authenticate` + `requireRole('admin')` (or `requireSuperadmin()` where noted). Suspended/soft-deleted users are rejected by `authenticate` before the role check fires.
+All admin routes are mounted under `/api/admin`, require `authenticate` + `requireRole('admin')`. Suspended/soft-deleted users are rejected by `authenticate` before the role check fires.
+
+**v1 access matrix:**
+
+| Endpoint | `admin` | `superadmin` |
+|---|---|---|
+| `GET /admin/users` (list) | ✓ | ✓ |
+| `GET /admin/users/:id` (detail) | ✓ | ✓ |
+| `GET /admin/overview` | ✓ | ✓ |
+| `POST /admin/users/:id/logout` (force-logout) | ✓ | ✓ |
+| `PATCH /admin/users/:id/role` | ✗ | ✓ |
+| `PATCH /admin/users/:id/suspend` | ✗ | ✓ |
+| `PATCH /admin/users/:id/unsuspend` | ✗ | ✓ |
+| `DELETE /admin/users/:id/soft-delete` | ✗ | ✓ |
+| `DELETE /admin/users/:id/hard-delete` | ✗ | ✓ |
+| `POST /admin/users/:id/restore` | ✗ | ✓ |
+
+The route layer enforces this via per-route `requireSuperadmin()` middleware on each mutation. The service layer's `assertCanActOn` still runs and enforces the strict hierarchy as defense-in-depth — so even if the route gates are ever relaxed, a same-rank action returns `CANNOT_ACT_ON_PEER`.
 
 ### `GET /api/admin/users`
 Paginated user list.
@@ -169,19 +187,19 @@ Each `users.*` count is computed from timestamps, not a stored status field:
 ### `PATCH /api/admin/users/:id/role` — **superadmin only**
 - **Body:** `{ role: 'user' | 'admin' | 'superadmin' }`.
 - **Pre-checks:**
-  1. Caller is superadmin
-  2. Target is not the caller (no self-demote)
-  3. If demoting current superadmin and they are the **last** superadmin → 403 `LAST_SUPERADMIN`
-  4. Target is not soft-deleted
-- **Side effects:** none beyond the role write. Role is read from `req.user.role` per request, so the change is effective on the next request without session revocation. (If a compromised-account scenario is suspected, the admin can additionally call force-logout — explicit and auditable.)
+  1. Caller is superadmin (route gate).
+  2. Target is not the caller (no self-demote).
+  3. Target is not soft-deleted.
+- **Side effects:** none beyond the role write. Role is read from `req.user.role` per request, so the change is effective on the next request without session revocation. (If a compromised-account scenario is suspected, the superadmin can additionally call force-logout — explicit and auditable.)
 
-### `PATCH /api/admin/users/:id/suspend`
-- **Pre-checks:** target is not self; caller role > target role (admin can't suspend admin/superadmin; superadmin can suspend admins); target is not already suspended (`suspendedAt == null`); target is not soft-deleted (`deletedAt == null`).
-- **Side effects:** set `suspendedAt = now`, `suspendedBy = caller._id`; revoke all active sessions for target.
+### `PATCH /api/admin/users/:id/suspend` — **superadmin only**
+- **Pre-checks:** target is not self; caller outranks target (service-layer defense-in-depth); target is not already suspended (`suspendedAt == null`); target is not soft-deleted (`deletedAt == null`).
+- **Side effects (wrapped in `session.withTransaction()` per STACK.md):** set `suspendedAt = now`, `suspendedBy = caller._id`; revoke all active sessions for target.
+- **Response:** the updated user document with derived `status`.
 
-### `PATCH /api/admin/users/:id/unsuspend`
-- **Pre-checks:** target is currently suspended (`suspendedAt != null`); caller role > target role; target is not soft-deleted.
-- **Side effects:** clear `suspendedAt = null`, `suspendedBy = null`.
+### `PATCH /api/admin/users/:id/unsuspend` — **superadmin only**
+- **Pre-checks:** target is currently suspended (`suspendedAt != null`); caller outranks target; target is not soft-deleted.
+- **Side effects:** clear `suspendedAt = null`, `suspendedBy = null`. Sessions are **not** restored — the user logs in fresh.
 
 ### `POST /api/admin/users/:id/logout`
 Force-revoke every active session for the target. Lighter than suspend — user can log back in immediately.
@@ -189,14 +207,14 @@ Force-revoke every active session for the target. Lighter than suspend — user 
 - **Side effects:** `Session.deleteMany({ userId: target._id })`.
 - **Response:** `{ sessionsRevoked: N }`.
 
-### `DELETE /api/admin/users/:id/soft-delete`
+### `DELETE /api/admin/users/:id/soft-delete` — **superadmin only**
 Soft delete. Sets `deletedAt`. Cascades to revoking sessions only (files/directories stay until hard-delete or restore).
-- **Pre-checks:** target is not self; caller role > target role; target is not already soft-deleted; **last-superadmin guard** if target is superadmin.
-- **Side effects:** set `deletedAt=now`; revoke all sessions.
+- **Pre-checks:** target is not self; caller outranks target; target is not already soft-deleted.
+- **Side effects (wrapped in `session.withTransaction()` per STACK.md):** set `deletedAt=now`; revoke all sessions.
 
-### `DELETE /api/admin/users/:id/hard-delete`
+### `DELETE /api/admin/users/:id/hard-delete` — **superadmin only**
 Hard delete. Irreversible. Removes user + all their data from DB and disk.
-- **Pre-checks:** same as soft delete + last-superadmin guard always applies.
+- **Pre-checks:** same as soft delete.
 - **Side effects (in this exact order):**
   1. **MongoDB transaction** (`session.withTransaction()` per STACK.md):
      - `Session.deleteMany({ userId })`
@@ -206,12 +224,12 @@ Hard delete. Irreversible. Removes user + all their data from DB and disk.
   2. **After commit:** delete the user's physical files from disk via the existing file-deletion utility used by `file.service.js`. If disk delete fails: log a warning, leave orphans for manual cleanup (DB is source of truth).
 - **Response:** `{ filesDeleted, directoriesDeleted, bytesFreed }` (tallied during the transaction so the response itself gives the admin a confirmation of what was wiped).
 
-### `POST /api/admin/users/:id/restore`
+### `POST /api/admin/users/:id/restore` — **superadmin only**
 Reverse a soft-delete. Mirror image of `DELETE /admin/users/:id/soft-delete`.
-- **Pre-checks:**
-  1. Target is currently soft-deleted (`deletedAt != null`) — else 400 `INVALID_INPUT` ("user is not deleted").
-  2. Caller role **strictly greater than** target role (admin can't restore an admin; only superadmin can). Hierarchy is enforced even though the target is in a soft-deleted state — once they come back, the hierarchy will apply normally.
-  3. Self-check is skipped: a soft-deleted user can't authenticate (`authenticate` rejects them before reaching this route), so they can't be the caller. No CANNOT_ACT_ON_SELF possible here.
+- **Pre-checks (in this order):**
+  1. Target is currently soft-deleted (`deletedAt != null`) — else 400 `INVALID_INPUT` ("user is not deleted"). Checked first so an active target returns the state error, not a hierarchy error.
+  2. Caller outranks target (service-layer defense-in-depth). Hierarchy applies even though the target is in a soft-deleted state — once they come back, the hierarchy will apply normally.
+  3. Self-check is skipped: a soft-deleted user can't authenticate (`authenticate` rejects them before reaching this route), so they can't be the caller. No `CANNOT_ACT_ON_SELF` possible here.
 - **Side effects:**
   - Set `deletedAt = null`.
   - **Do NOT** auto-clear `suspendedAt`. If the user was suspended before being soft-deleted, they come back suspended — never silently grant access. Admin can call unsuspend separately.
