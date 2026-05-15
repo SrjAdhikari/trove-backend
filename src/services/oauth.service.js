@@ -13,8 +13,9 @@ import appErrorCode from "../constants/appErrorCode.js";
 
 import { enforceDeviceLimit } from "./session.service.js";
 
-const { CONFLICT } = httpStatus;
-const { PROVIDER_MISMATCH } = appErrorCode;
+const { CONFLICT, UNAUTHORIZED, FORBIDDEN } = httpStatus;
+const { PROVIDER_MISMATCH, UNAUTHORIZED_ACCESS, ACCOUNT_SUSPENDED } =
+	appErrorCode;
 
 /**
  * Shared OAuth sign-in flow: finds or creates the user, then issues a session.
@@ -43,6 +44,23 @@ const loginOrCreateOAuthUser = async (provider, profile, deviceInfo) => {
 				`This email is registered with ${existingUser.provider}. Please sign in using that method.`,
 				CONFLICT,
 				PROVIDER_MISMATCH,
+			);
+		}
+
+		// Reject locked-out accounts before issuing a session
+		if (existingUser.deletedAt) {
+			throw new AppError(
+				"Account no longer exists",
+				UNAUTHORIZED,
+				UNAUTHORIZED_ACCESS,
+			);
+		}
+
+		if (existingUser.suspendedAt) {
+			throw new AppError(
+				"Account is suspended",
+				FORBIDDEN,
+				ACCOUNT_SUSPENDED,
 			);
 		}
 

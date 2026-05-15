@@ -31,8 +31,14 @@ import {
 import { loginOrCreateOAuthUser } from "./oauth.service.js";
 import { enforceDeviceLimit } from "./session.service.js";
 
-const { CONFLICT, NOT_FOUND, BAD_REQUEST, UNAUTHORIZED, TOO_MANY_REQUESTS } =
-	httpStatus;
+const {
+	CONFLICT,
+	NOT_FOUND,
+	BAD_REQUEST,
+	UNAUTHORIZED,
+	FORBIDDEN,
+	TOO_MANY_REQUESTS,
+} = httpStatus;
 
 const {
 	USER_ALREADY_EXISTS,
@@ -44,6 +50,8 @@ const {
 	USER_NOT_VERIFIED,
 	PROVIDER_MISMATCH,
 	GOOGLE_EMAIL_NOT_VERIFIED,
+	UNAUTHORIZED_ACCESS,
+	ACCOUNT_SUSPENDED,
 } = appErrorCode;
 
 /**
@@ -310,6 +318,19 @@ const loginUser = async (email, password, deviceInfo) => {
 			BAD_REQUEST,
 			USER_NOT_VERIFIED,
 		);
+	}
+
+	// Reject locked-out accounts before confirming credentials
+	if (user.deletedAt) {
+		throw new AppError(
+			"Account no longer exists",
+			UNAUTHORIZED,
+			UNAUTHORIZED_ACCESS,
+		);
+	}
+
+	if (user.suspendedAt) {
+		throw new AppError("Account is suspended", FORBIDDEN, ACCOUNT_SUSPENDED);
 	}
 
 	const isPasswordValid = await user.comparePassword(password);
