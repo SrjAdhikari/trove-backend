@@ -28,7 +28,7 @@ describe("admin/user.service — changeUserRole", () => {
 		const caller = await createTestUser({ role: ROLES.SUPERADMIN });
 		const target = await createTestUser({ role: ROLES.USER });
 
-		const result = await changeUserRole(caller._id, target._id, ROLES.ADMIN);
+		const result = await changeUserRole(caller, target._id, ROLES.ADMIN);
 
 		expect(result.role).toBe(ROLES.ADMIN);
 		expect(result.status).toBe("active");
@@ -42,7 +42,7 @@ describe("admin/user.service — changeUserRole", () => {
 		const target = await createTestUser();
 
 		await expect(
-			changeUserRole(caller._id, target._id, "not-a-role"),
+			changeUserRole(caller, target._id, "not-a-role"),
 		).rejects.toMatchObject({ statusCode: 400, code: "INVALID_INPUT" });
 	});
 
@@ -50,7 +50,7 @@ describe("admin/user.service — changeUserRole", () => {
 		const caller = await createTestUser({ role: ROLES.SUPERADMIN });
 
 		await expect(
-			changeUserRole(caller._id, caller._id, ROLES.ADMIN),
+			changeUserRole(caller, caller._id, ROLES.ADMIN),
 		).rejects.toMatchObject({ statusCode: 403, code: "CANNOT_ACT_ON_SELF" });
 	});
 
@@ -59,7 +59,7 @@ describe("admin/user.service — changeUserRole", () => {
 		const target = await createTestUser({ deletedAt: new Date() });
 
 		await expect(
-			changeUserRole(caller._id, target._id, ROLES.ADMIN),
+			changeUserRole(caller, target._id, ROLES.ADMIN),
 		).rejects.toMatchObject({ statusCode: 400, code: "INVALID_INPUT" });
 	});
 
@@ -67,11 +67,7 @@ describe("admin/user.service — changeUserRole", () => {
 		const caller = await createTestUser({ role: ROLES.SUPERADMIN });
 		const target = await createTestUser({ role: ROLES.ADMIN });
 
-		const result = await changeUserRole(
-			caller._id,
-			target._id,
-			ROLES.ADMIN,
-		);
+		const result = await changeUserRole(caller, target._id, ROLES.ADMIN);
 
 		expect(result.role).toBe(ROLES.ADMIN);
 	});

@@ -82,7 +82,7 @@ const changeUserRoleHandler = async (req, res) => {
 	const { role } = req.body ?? {};
 	const user = req.user;
 
-	const updatedUser = await changeUserRole(user._id, id, role);
+	const updatedUser = await changeUserRole(user, id, role);
 
 	res.status(OK).json({
 		success: true,

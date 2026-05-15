@@ -237,12 +237,12 @@ const getUserById = async (id) => {
 /**
  * Updates the target user's role
  *
- * @param {string|mongoose.Types.ObjectId} callerId - ID of the admin making the request
+ * @param {object} caller - The admin making the request (has _id and role)
  * @param {string} targetId - ID of the user to update
  * @param {"user"|"admin"|"superadmin"} newRole - New role to assign to the user
- * @returns {object} - Object containing the updated user
+ * @returns {Promise<object>} - Object containing the updated user
  */
-const changeUserRole = async (callerId, targetId, newRole) => {
+const changeUserRole = async (caller, targetId, newRole) => {
 	if (!ALLOWED_ROLES.includes(newRole)) {
 		throw new AppError(
 			`Invalid role. Allowed: ${ALLOWED_ROLES.join(", ")}`,
@@ -251,7 +251,7 @@ const changeUserRole = async (callerId, targetId, newRole) => {
 		);
 	}
 
-	assertNotSelf(callerId, targetId);
+	assertNotSelf(caller._id, targetId);
 
 	const user = await findUserById(targetId);
 	if (user.deletedAt) {
@@ -261,6 +261,8 @@ const changeUserRole = async (callerId, targetId, newRole) => {
 			INVALID_INPUT,
 		);
 	}
+
+	assertCanActOn(caller, user);
 
 	if (user.role !== newRole) {
 		user.role = newRole;
