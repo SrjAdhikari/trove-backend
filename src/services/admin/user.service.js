@@ -1,6 +1,7 @@
 //* src/services/admin/user.service.js
 
 import mongoose from "mongoose";
+import { rm } from "node:fs/promises";
 
 import User from "../../models/user.model.js";
 import File from "../../models/file.model.js";
@@ -10,11 +11,17 @@ import Session from "../../models/session.model.js";
 import AppError from "../../errors/AppError.js";
 import httpStatus from "../../constants/httpStatus.js";
 import appErrorCode from "../../constants/appErrorCode.js";
-import { ROLES } from "../../constants/roles.js";
+import { ROLES, ROLE_RANK } from "../../constants/roles.js";
 import { USER_STATUS, getUserStatus } from "../../utils/userStatus.js";
+import { buildFilePath } from "../../utils/storagePath.js";
 
-const { BAD_REQUEST, NOT_FOUND } = httpStatus;
-const { INVALID_INPUT, USER_NOT_FOUND } = appErrorCode;
+const { BAD_REQUEST, NOT_FOUND, FORBIDDEN } = httpStatus;
+const {
+	INVALID_INPUT,
+	USER_NOT_FOUND,
+	CANNOT_ACT_ON_SELF,
+	CANNOT_ACT_ON_PEER,
+} = appErrorCode;
 
 // Convert the constant objects into plain arrays.
 const ALLOWED_ROLES = Object.values(ROLES);
@@ -51,6 +58,70 @@ const buildListFilter = ({ q, role, status, includeDeleted }) => {
 	}
 
 	return filter;
+};
+
+/**
+ * Converts user to plain object and adds computed status
+ *
+ * @param {MongooseDocument} user - Mongoose document
+ * @returns {object} - Plain user object with status
+ */
+const toPlainUser = (user) => ({
+	...user.toObject(),
+	status: getUserStatus(user),
+});
+
+/**
+ * Prevents the caller from performing destructive operations on their own account
+ *
+ * @param {string} callerId - ID of the caller
+ * @param {string} targetId - ID of the target
+ */
+const assertNotSelf = (callerId, targetId) => {
+	if (String(callerId) === String(targetId)) {
+		throw new AppError(
+			"Cannot perform this action on your own account",
+			FORBIDDEN,
+			CANNOT_ACT_ON_SELF,
+		);
+	}
+};
+
+/**
+ * Prevents the caller from performing operations on a user of equal or higher rank
+ *
+ * @param {object} caller - User doing the action (has .role)
+ * @param {object} target - User being acted on (has .role)
+ */
+const assertCanActOn = (caller, target) => {
+	const callerRank = ROLE_RANK[caller.role];
+	const targetRank = ROLE_RANK[target.role];
+
+	// Fail closed: unknown roles are rejected.
+	if (
+		typeof callerRank !== "number" ||
+		typeof targetRank !== "number" ||
+		callerRank <= targetRank
+	) {
+		throw new AppError(
+			"Cannot act on a peer or higher",
+			FORBIDDEN,
+			CANNOT_ACT_ON_PEER,
+		);
+	}
+};
+
+/**
+ * Finds the target user by ID or throws 404
+ * @param {string} id - ID of the user to find
+ */
+const findUserById = async (id) => {
+	const user = await User.findById(id);
+	if (!user) {
+		throw new AppError("User not found", NOT_FOUND, USER_NOT_FOUND);
+	}
+
+	return user;
 };
 
 /**
@@ -163,4 +234,284 @@ const getUserById = async (id) => {
 	};
 };
 
-export { listUsers, getUserById };
+/**
+ * Updates the target user's role
+ *
+ * @param {string|mongoose.Types.ObjectId} callerId - ID of the admin making the request
+ * @param {string} targetId - ID of the user to update
+ * @param {"user"|"admin"|"superadmin"} newRole - New role to assign to the user
+ * @returns {object} - Object containing the updated user
+ */
+const changeUserRole = async (callerId, targetId, newRole) => {
+	if (!ALLOWED_ROLES.includes(newRole)) {
+		throw new AppError(
+			`Invalid role. Allowed: ${ALLOWED_ROLES.join(", ")}`,
+			BAD_REQUEST,
+			INVALID_INPUT,
+		);
+	}
+
+	assertNotSelf(callerId, targetId);
+
+	const user = await findUserById(targetId);
+	if (user.deletedAt) {
+		throw new AppError(
+			"Cannot change role of a deleted user",
+			BAD_REQUEST,
+			INVALID_INPUT,
+		);
+	}
+
+	if (user.role !== newRole) {
+		user.role = newRole;
+		await user.save();
+	}
+
+	return toPlainUser(user);
+};
+
+/**
+ * Suspends the target user
+ *
+ * @param {object} caller - User object
+ * @param {string} targetId - ID of the user to suspend
+ */
+const suspendUser = async (caller, targetId) => {
+	assertNotSelf(caller._id, targetId);
+
+	const user = await findUserById(targetId);
+	assertCanActOn(caller, user);
+
+	if (user.deletedAt) {
+		throw new AppError(
+			"Cannot suspend a deleted user",
+			BAD_REQUEST,
+			INVALID_INPUT,
+		);
+	}
+
+	if (user.suspendedAt) {
+		throw new AppError("User is already suspended", BAD_REQUEST, INVALID_INPUT);
+	}
+
+	const mongooseSession = await mongoose.startSession();
+	try {
+		await mongooseSession.withTransaction(async () => {
+			user.suspendedAt = new Date();
+			user.suspendedBy = caller._id;
+			await user.save({ session: mongooseSession });
+			await Session.deleteMany(
+				{ userId: user._id },
+				{ session: mongooseSession },
+			);
+		});
+	} finally {
+		await mongooseSession.endSession();
+	}
+
+	return toPlainUser(user);
+};
+
+/**
+ * Lifts a suspension for the target user
+ * Sessions are NOT automatically restored — the user must log in again
+ *
+ * @param {object} caller - User object
+ * @param {string} targetId - ID of the user to unsuspend
+ * @returns {Promise<object>} - Object containing the unsuspended user
+ */
+const unsuspendUser = async (caller, targetId) => {
+	const user = await findUserById(targetId);
+	assertCanActOn(caller, user);
+
+	if (user.deletedAt) {
+		throw new AppError(
+			"Cannot unsuspend a deleted user",
+			BAD_REQUEST,
+			INVALID_INPUT,
+		);
+	}
+
+	if (!user.suspendedAt) {
+		throw new AppError("User is not suspended", BAD_REQUEST, INVALID_INPUT);
+	}
+
+	user.suspendedAt = null;
+	user.suspendedBy = null;
+	await user.save();
+
+	return toPlainUser(user);
+};
+
+/**
+ * Force-revokes every active session for the target
+ *
+ * @param {object} caller - User object
+ * @param {string} targetId - ID of the user to force-logout
+ * @returns {Promise<object>} - Object containing the number of sessions revoked
+ */
+const forceLogoutUser = async (caller, targetId) => {
+	const user = await findUserById(targetId);
+
+	// Self force-logout is harmless — admins can punt their own sessions.
+	// For non-self targets, enforce the strict hierarchy.
+	if (String(caller._id) !== String(targetId)) {
+		assertCanActOn(caller, user);
+	}
+
+	if (user.deletedAt) {
+		throw new AppError(
+			"Cannot force-logout a deleted user",
+			BAD_REQUEST,
+			INVALID_INPUT,
+		);
+	}
+
+	const { deletedCount } = await Session.deleteMany({ userId: user._id });
+
+	return { sessionsRevoked: deletedCount };
+};
+
+/**
+ * Soft delete user
+ * Files/directories survive until hard-delete or restore
+ *
+ * @param {object} caller - User object
+ * @param {string} targetId - ID of the user to soft-delete
+ * @returns {Promise<object>} - Object containing the soft-deleted user
+ */
+const softDeleteUser = async (caller, targetId) => {
+	assertNotSelf(caller._id, targetId);
+
+	const user = await findUserById(targetId);
+	assertCanActOn(caller, user);
+
+	if (user.deletedAt) {
+		throw new AppError("User is already deleted", BAD_REQUEST, INVALID_INPUT);
+	}
+
+	const mongooseSession = await mongoose.startSession();
+	try {
+		await mongooseSession.withTransaction(async () => {
+			user.deletedAt = new Date();
+			await user.save({ session: mongooseSession });
+			await Session.deleteMany(
+				{ userId: user._id },
+				{ session: mongooseSession },
+			);
+		});
+	} finally {
+		await mongooseSession.endSession();
+	}
+
+	return toPlainUser(user);
+};
+
+/**
+ * Hard delete user
+ * Irreversibly wipes the user and all their data from MongoDB
+ * then deletes physical files from disk
+ *
+ * @param {object} caller - User object
+ * @param {string} targetId - ID of the user to hard-delete
+ * @returns {Promise<object>} - Object containing the number of files and directories deleted
+ */
+const hardDeleteUser = async (caller, targetId) => {
+	assertNotSelf(caller._id, targetId);
+
+	const user = await findUserById(targetId);
+
+	assertCanActOn(caller, user);
+
+	const userObjectId = user._id;
+	const mongooseSession = await mongoose.startSession();
+
+	let deletionSummary;
+	let filesToWipe = [];
+
+	try {
+		await mongooseSession.withTransaction(async () => {
+			const fileAgg = await File.aggregate([
+				{ $match: { userId: userObjectId } },
+				{
+					$group: {
+						_id: null,
+						count: { $sum: 1 },
+						bytes: { $sum: "$size" },
+					},
+				},
+			]).session(mongooseSession);
+
+			const files = await File.find({ userId: userObjectId }, "_id extension", {
+				session: mongooseSession,
+			}).lean();
+
+			await Session.deleteMany(
+				{ userId: userObjectId },
+				{ session: mongooseSession },
+			);
+
+			await File.deleteMany(
+				{ userId: userObjectId },
+				{ session: mongooseSession },
+			);
+
+			const { deletedCount } = await Directory.deleteMany(
+				{ userId: userObjectId },
+				{ session: mongooseSession },
+			);
+
+			await User.deleteOne({ _id: userObjectId }, { session: mongooseSession });
+
+			deletionSummary = {
+				filesDeleted: fileAgg[0]?.count ?? 0,
+				directoriesDeleted: deletedCount,
+				bytesFreed: fileAgg[0]?.bytes ?? 0,
+			};
+
+			filesToWipe = files;
+		});
+	} finally {
+		await mongooseSession.endSession();
+	}
+
+	await Promise.allSettled(
+		filesToWipe.map((file) => rm(buildFilePath(file), { force: true })),
+	);
+
+	return deletionSummary;
+};
+
+/**
+ * Restore soft-deleted user
+ *
+ * @param {object} caller - User object
+ * @param {string} targetId - ID of the user to restore
+ * @returns {Promise<object>} - Object containing the restored user
+ */
+const restoreUser = async (caller, targetId) => {
+	const user = await findUserById(targetId);
+
+	if (!user.deletedAt) {
+		throw new AppError("User is not deleted", BAD_REQUEST, INVALID_INPUT);
+	}
+
+	assertCanActOn(caller, user);
+
+	user.deletedAt = null;
+	await user.save();
+
+	return toPlainUser(user);
+};
+
+export {
+	listUsers,
+	getUserById,
+	changeUserRole,
+	suspendUser,
+	unsuspendUser,
+	forceLogoutUser,
+	softDeleteUser,
+	hardDeleteUser,
+	restoreUser,
+};
