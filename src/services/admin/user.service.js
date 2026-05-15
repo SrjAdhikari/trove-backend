@@ -475,9 +475,20 @@ const hardDeleteUser = async (caller, targetId) => {
 		await mongooseSession.endSession();
 	}
 
-	await Promise.allSettled(
+	const wipeResults = await Promise.allSettled(
 		filesToWipe.map((file) => rm(buildFilePath(file), { force: true })),
 	);
+
+	// DB is source of truth — disk wipe is best-effort. Log every failure so
+	// orphaned bytes are reconcilable later (path + reason in the warn line).
+	for (const result of wipeResults) {
+		if (result.status === "rejected") {
+			console.warn(
+				"Hard-delete: failed to remove file from disk",
+				result.reason,
+			);
+		}
+	}
 
 	return deletionSummary;
 };
