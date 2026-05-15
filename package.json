@@ -4,6 +4,9 @@
 	"description": "Backend REST API for TroveCloud — a secure cloud file storage and management platform",
 	"main": "server.js",
 	"type": "module",
+	"engines": {
+		"node": ">=20.11.0"
+	},
 	"scripts": {
 		"dev": "node --watch server.js",
 		"start": "node server.js",
