@@ -1,11 +1,11 @@
 //* src/services/directory.service.js
 
-import path from "node:path";
 import { rm } from "node:fs/promises";
 import mongoose from "mongoose";
 import Directory from "../models/directory.model.js";
 import File from "../models/file.model.js";
 import AppError from "../errors/AppError.js";
+import { STORAGE_ROOT, buildFilePath } from "../utils/storagePath.js";
 import httpStatus from "../constants/httpStatus.js";
 import appErrorCode from "../constants/appErrorCode.js";
 
@@ -16,7 +16,6 @@ const {
 	DIRECTORY_DELETE_FAILED,
 	FILE_DELETE_FAILED,
 } = appErrorCode;
-const STORAGE_ROOT = path.resolve(import.meta.dirname, "../../storage");
 
 /**
  * Retrieves a directory with its immediate files and child folders, recursive
@@ -179,7 +178,7 @@ const deleteDirectory = async (directoryId, userId) => {
 
 	// Step 4:  Validate all file paths before any deletion
 	const filePaths = allFiles.map((file) => {
-		const filePath = path.join(STORAGE_ROOT, `${file._id}${file.extension}`);
+		const filePath = buildFilePath(file);
 
 		// Guard against path traversal attacks
 		if (!filePath.startsWith(STORAGE_ROOT)) {

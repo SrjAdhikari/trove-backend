@@ -4,9 +4,14 @@
 	"description": "Backend REST API for TroveCloud — a secure cloud file storage and management platform",
 	"main": "server.js",
 	"type": "module",
+	"engines": {
+		"node": ">=20.11.0"
+	},
 	"scripts": {
 		"dev": "node --watch server.js",
 		"start": "node server.js",
+		"test": "vitest run",
+		"test:watch": "vitest",
 		"seed:superadmin": "node scripts/seed-superadmin.js"
 	},
 	"repository": {
@@ -37,5 +42,9 @@
 		"mongoose": "^9.2.4",
 		"resend": "^6.9.4",
 		"ua-parser-js": "^2.0.9"
+	},
+	"devDependencies": {
+		"mongodb-memory-server": "^11.1.0",
+		"vitest": "^4.1.6"
 	}
 }

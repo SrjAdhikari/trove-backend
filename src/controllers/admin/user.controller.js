@@ -1,7 +1,17 @@
 //* src/controllers/admin/user.controller.js
 
 import httpStatus from "../../constants/httpStatus.js";
-import { listUsers, getUserById } from "../../services/admin/user.service.js";
+import {
+	listUsers,
+	getUserById,
+	changeUserRole,
+	suspendUser,
+	unsuspendUser,
+	forceLogoutUser,
+	softDeleteUser,
+	hardDeleteUser,
+	restoreUser,
+} from "../../services/admin/user.service.js";
 
 const { OK } = httpStatus;
 
@@ -11,7 +21,7 @@ const MAX_LIMIT = 100;
 
 /**
  * Helper function to clamp a number into the range [min, max].
- * Express delivers req.query as strings, or undefined when the key is absent. 
+ * Express delivers req.query as strings, or undefined when the key is absent.
  * This can lead to unexpected behavior if not handled properly.
  *
  * @param {string} raw - Raw string value to parse.
@@ -67,4 +77,106 @@ const getUserByIdHandler = async (req, res) => {
 	});
 };
 
-export { listUsersHandler, getUserByIdHandler };
+const changeUserRoleHandler = async (req, res) => {
+	const { id } = req.params;
+	const { role } = req.body ?? {};
+	const user = req.user;
+
+	const updatedUser = await changeUserRole(user, id, role);
+
+	res.status(OK).json({
+		success: true,
+		message: "User role updated successfully",
+		data: updatedUser,
+	});
+};
+
+const suspendUserHandler = async (req, res) => {
+	const { id } = req.params;
+	const user = req.user;
+
+	const suspendedUser = await suspendUser(user, id);
+
+	res.status(OK).json({
+		success: true,
+		message: "User suspended successfully",
+		data: suspendedUser,
+	});
+};
+
+const unsuspendUserHandler = async (req, res) => {
+	const { id } = req.params;
+	const user = req.user;
+
+	const unsuspendedUser = await unsuspendUser(user, id);
+
+	res.status(OK).json({
+		success: true,
+		message: "User unsuspended successfully",
+		data: unsuspendedUser,
+	});
+};
+
+const forceLogoutUserHandler = async (req, res) => {
+	const { id } = req.params;
+	const user = req.user;
+
+	const loggedOutResult = await forceLogoutUser(user, id);
+
+	res.status(OK).json({
+		success: true,
+		message: "User sessions revoked successfully",
+		data: loggedOutResult,
+	});
+};
+
+const softDeleteUserHandler = async (req, res) => {
+	const { id } = req.params;
+	const user = req.user;
+
+	const deletedUser = await softDeleteUser(user, id);
+
+	res.status(OK).json({
+		success: true,
+		message: "User soft-deleted successfully",
+		data: deletedUser,
+	});
+};
+
+const hardDeleteUserHandler = async (req, res) => {
+	const { id } = req.params;
+	const user = req.user;
+
+	const purgedResult = await hardDeleteUser(user, id);
+
+	res.status(OK).json({
+		success: true,
+		message: "User permanently deleted",
+		data: purgedResult,
+	});
+};
+
+const restoreUserHandler = async (req, res) => {
+	const { id } = req.params;
+	const user = req.user;
+
+	const restoredUser = await restoreUser(user, id);
+
+	res.status(OK).json({
+		success: true,
+		message: "User restored successfully",
+		data: restoredUser,
+	});
+};
+
+export {
+	listUsersHandler,
+	getUserByIdHandler,
+	changeUserRoleHandler,
+	suspendUserHandler,
+	unsuspendUserHandler,
+	forceLogoutUserHandler,
+	softDeleteUserHandler,
+	hardDeleteUserHandler,
+	restoreUserHandler,
+};

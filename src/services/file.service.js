@@ -9,6 +9,7 @@ import File from "../models/file.model.js";
 import Directory from "../models/directory.model.js";
 
 import createByteCounter from "../utils/byteCounter.js";
+import { buildFilePath } from "../utils/storagePath.js";
 
 import httpStatus from "../constants/httpStatus.js";
 import appErrorCode from "../constants/appErrorCode.js";
@@ -22,8 +23,7 @@ const {
 	FILE_TOO_LARGE,
 } = appErrorCode;
 
-const STORAGE_ROOT = path.resolve(import.meta.dirname, "../../storage");
-const MAX_UPLOAD_SIZE_BYTES = 100 * 1024 * 1024;
+const MAX_UPLOAD_SIZE_BYTES = 100 * 1000 * 1000;
 
 /**
  * Retrieves a file document and its physical storage path.
@@ -44,7 +44,7 @@ const getFile = async (fileId, userId) => {
 	}
 
 	// Construct the physical storage path using the file's ObjectId as the filename
-	const filePath = path.join(STORAGE_ROOT, `${file._id}${file.extension}`);
+	const filePath = buildFilePath(file);
 
 	return { file, filePath };
 };
@@ -83,7 +83,7 @@ const uploadFile = async (parentDirId, userId, fileName, fileStream) => {
 		userId,
 	});
 
-	const filePath = path.join(STORAGE_ROOT, `${file._id}${extension}`);
+	const filePath = buildFilePath(file);
 
 	// Count bytes mid-stream so we can both persist the size and enforce the cap
 	const counter = createByteCounter(MAX_UPLOAD_SIZE_BYTES);
@@ -160,7 +160,7 @@ const deleteFile = async (fileId, userId) => {
 		throw new AppError("File not found", NOT_FOUND, FILE_NOT_FOUND);
 	}
 
-	const filePath = path.join(STORAGE_ROOT, `${file._id}${file.extension}`);
+	const filePath = buildFilePath(file);
 
 	// Delete DB record and physical file in parallel
 	await Promise.all([
