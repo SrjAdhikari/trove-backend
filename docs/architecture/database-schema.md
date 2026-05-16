@@ -1,6 +1,6 @@
 # Database Schema
 
-> **Status:** As-built (2026-04-30). Mirrors `src/models/*` and `src/schemas/*`. Refresh when a model is added, a field is renamed, or an index changes.
+> **Status:** As-built (2026-05-15). Mirrors `src/models/*` and `src/schemas/*`. Refresh when a model is added, a field is renamed, or an index changes.
 
 The TroveCloud backend runs on MongoDB via Mongoose. This doc is a single place to look up every collection, its fields, its indexes, and how the collections link to each other. The code in `src/models/` is the source of truth — if this document ever drifts from the models, the models win.
 
@@ -47,12 +47,17 @@ Source: `src/models/user.model.js`. Atlas mirror: `src/schemas/user.schema.js`.
 | `otpExpiresAt`          | Date     | no                        | —         | `select: false`                                               |
 | `isVerified`            | Boolean  | no                        | `false`   | Flips to `true` inside `verifyOTP` transaction                |
 | `verificationExpiresAt` | Date     | no                        | —         | `select: false`, TTL-indexed                                  |
+| `role`                  | String   | no                        | `"user"`  | Enum `["user", "admin", "superadmin"]` (`ROLES` in `src/constants/roles.js`). Indexed. Read by `requireRole` middleware and admin overview's `byRole` counts. |
+| `suspendedAt`           | Date     | no                        | `null`    | Indexed. `authenticate` rejects sessions where this is non-null (`ACCOUNT_SUSPENDED`); `loginUser` re-checks before issuing a session. Cleared by `unsuspendUser`. |
+| `suspendedBy`           | ObjectId | no                        | `null`    | `ref: "User"`. Set when an admin suspends the user; cleared on unsuspend. Not indexed (audit-only field). |
+| `deletedAt`             | Date     | no                        | `null`    | Indexed. Soft-delete marker; `authenticate` and `loginUser` reject when non-null (`UNAUTHORIZED_ACCESS`). Cleared by `restoreUser`; bypassed entirely on hard-delete (which physically removes the document). |
 | `createdAt`/`updatedAt` | Date     | —                         | —         | Via `timestamps: true`                                        |
 
 **Indexes**
 
 - `email` — unique (from `unique: true` on schema).
 - `verificationExpiresAt` — TTL (`expireAfterSeconds: 0`). Deletes unverified users automatically when their 1-hour verification window expires.
+- `role`, `suspendedAt`, `deletedAt` — individual non-unique indexes. Sized for admin user-list filtering and the `authenticate` / `loginUser` reject paths. A compound or partial index on `{ deletedAt: null }` is the candidate when admin endpoints get real traffic — deferred until then.
 
 **Hooks**
 
@@ -176,7 +181,12 @@ The refs in one place:
 - `File.parentDirId` → `Directory._id` — required; a file cannot orphan.
 - `File.userId` → `User._id` — same denormalization rationale as Directory.
 
-**Cascading deletes** are handled by `directory.service.js`'s recursive delete: it walks the tree via `$graphLookup`, deletes directory + file rows inside a transaction, and cleans up physical files with `Promise.allSettled` outside. See `transaction-patterns.md` for the "not-retry-safe work stays out" rule.
+**Self-reference on User.** `User.suspendedBy → User._id` records the acting admin when a user is suspended. Not enforced beyond Mongoose's `ref` — purely audit metadata.
+
+**Cascading deletes** are handled in two places:
+
+- `directory.service.js`'s recursive delete walks the tree via `$graphLookup`, deletes directory + file rows inside a transaction, and cleans up physical files with `Promise.allSettled` outside.
+- `admin/user.service.js`'s `hardDeleteUser` wipes `Session`, `File`, `Directory`, and `User` rows in one transaction, with the same outside-the-transaction `Promise.allSettled` shape for physical-file cleanup. See `transaction-patterns.md` for the "not-retry-safe work stays out" rule.
 
 ---
 
@@ -200,7 +210,7 @@ This runs `collMod` against each collection with `validationLevel: "strict"` and
 
 ## 🚧 Non-Goals
 
-- **Soft delete.** No `deletedAt` field on any collection. Deletes are physical. If soft-delete becomes a requirement, it's a cross-cutting change touching every query filter in the service layer.
+- **Soft delete for `files` and `directories`.** No `deletedAt` field on either collection. User-driven deletes through `file.service.js` / `directory.service.js` are physical. The `users` collection does carry a `deletedAt` field (set by the admin soft-delete handler), but query filters elsewhere are not yet soft-delete-aware — extending this to user-facing CRUD would be a cross-cutting change touching every query filter in the service layer.
 - **Optimistic concurrency control beyond Mongoose defaults.** Concurrent writes to the same document land last-write-wins. `__v` is present (default Mongoose behavior) but not actively enforced.
 - **Schema versioning.** Field renames are not supported in place; they'd need a dual-write migration. Additions-with-defaults are safe.
 - **Full-text search indexes.** No `$text` or Atlas Search indexes. Listing queries are direct field lookups only.
