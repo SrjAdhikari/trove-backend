@@ -1,10 +1,10 @@
 # RBAC + Admin v1
 
-> **Status:** Planned / in-progress. This document is the implementation reference for the RBAC + admin subsystem. After PR 2 merges, the "Implementation order" and any moot "Risks" entries should be trimmed and a short "Currently implemented" snapshot added so it matches the shape of `oauth-multi-provider.md` and `transaction-patterns.md`.
+> **Status:** As-built (2026-05-15). Implementation reference for the RBAC + admin subsystem. Foundation + read endpoints shipped in PR #30; mutation endpoints, Vitest setup, and the suspended/deleted login gate shipped in PR #33.
 
 ## Context
 
-Trove currently has no concept of privileged users. Every authenticated request is treated identically and ownership is enforced per-resource via `{ _id, userId }` query filters in the service layer. There are no admin endpoints, no role field on `User`, and no audit log.
+Before this work, TroveCloud had no concept of privileged users. Every authenticated request was treated identically and ownership was enforced per-resource via `{ _id, userId }` query filters in the service layer. There were no admin endpoints, no role field on `User`, and no audit log.
 
 This subsystem introduces **Role-Based Access Control (RBAC)** with three roles (`user | admin | superadmin`) and the first set of admin endpoints needed to operate the platform: list users, view details, force-logout, suspend/unsuspend, change roles, soft-delete + restore, hard-delete, and a system overview dashboard. An admin audit log is deliberately **not** part of v1; see "Out of scope" for the rationale.
 
@@ -356,79 +356,35 @@ Document this in README under a new "First Deploy" section.
 
 ---
 
-## Implementation order — split into two PRs sharing this feature branch
+## Currently implemented
 
-Both PRs target `develop`. Branch: `feat/rbac-admin-v1`.
+- `src/constants/roles.js` — frozen `ROLES` enum + `ROLE_RANK` map.
+- `src/utils/userStatus.js` — derived-status helper (`USER_STATUS`, `getUserStatus`).
+- `src/middlewares/authorize.middleware.js` — `requireRole(minRole)` and `requireSuperadmin()`.
+- `src/middlewares/auth.middleware.js` — rejects soft-deleted (`UNAUTHORIZED_ACCESS`) and suspended (`ACCOUNT_SUSPENDED`) users; same gate is duplicated in `loginUser` so a fresh credential check on a locked account is rejected pre-session-issue.
+- `src/models/user.model.js` — `role`, `suspendedAt`, `suspendedBy`, `deletedAt` fields, each indexed.
+- `src/routes/admin/*`, `src/controllers/admin/*`, `src/services/admin/*` — the 10 endpoints in the access matrix above.
+- `scripts/seed-superadmin.js` + `npm run seed:superadmin -- --email=<...>` — bootstrap.
+- Vitest harness under `tests/` covering admin/auth/oauth services, run via `npm test` (configured in `vitest.config.js`).
+- Atlas `$jsonSchema` for `users` mirrored manually with the four new fields.
 
-### PR 1 — Foundation + reads
-1. `roles.js`, `appErrorCode.js` additions.
-2. `User` schema: `role`, `suspendedAt`, `suspendedBy`, `deletedAt`. Plus `src/utils/userStatus.js` (the derived-status helper).
-3. `authorize.middleware.js`.
-4. `authenticate.middleware.js` updates (suspended + deleted guards).
-5. `scripts/seed-superadmin.js` + `package.json` script.
-6. Read endpoints: `GET /admin/users`, `GET /admin/users/:id`, `GET /admin/overview`.
-7. Atlas mirror applied manually.
-8. Run seed script in dev → verify first superadmin can hit read endpoints.
-
-### PR 2 — Mutations
-1. `PATCH /admin/users/:id/role` (with last-superadmin guard).
-2. `PATCH /admin/users/:id/suspend`, `unsuspend`.
-3. `POST /admin/users/:id/logout`.
-4. `DELETE /admin/users/:id/soft-delete` (soft).
-5. `DELETE /admin/users/:id/hard-delete` (transaction + disk cleanup).
-6. `POST /admin/users/:id/restore` (clear `deletedAt`; preserve `suspendedAt`).
+The `assertNotLastSuperadmin` guard and the matching `LAST_SUPERADMIN` error were intentionally **not** wired in PR #33. The deployment runs a single-superadmin topology (see "Locked design decisions"), so the only scenarios the guard would catch — demoting or deleting the last superadmin — cannot arise without first creating a second superadmin. The error code is defined in `appErrorCode.js` and ready to re-introduce if topology changes.
 
 ---
 
-## Critical files to read before implementing
+## Verification snapshot
 
-- `src/middlewares/auth.middleware.js` — pattern to extend (populate + guards)
-- `src/models/user.model.js` — schema style, hooks, `select: false` pattern
-- `src/models/session.model.js` — Session TTL + userId ref
-- `src/services/file.service.js` — existing disk-deletion logic to **reuse** in purge cascade (do not reinvent)
-- `src/services/auth.service.js` — example of `session.withTransaction()` usage and `AppError` throwing
-- `src/errors/AppError.js` — constructor signature `(message, statusCode, code)`
-- `src/constants/httpStatus.js` + `src/constants/appErrorCode.js` — naming conventions
-- `src/routes/auth.routes.js` — middleware composition style (`router.use(authenticate)` vs per-route)
-- `docs/architecture/transaction-patterns.md` — required reading before writing the purge transaction
-- `.claude/STACK.md` — Known Constraints (Atlas mirror, soft-delete default, transaction rule)
+Smoke tests that exercise the shipped surface:
 
----
-
-## Verification
-
-### After PR 1
-- `npm test` (or whatever runs the existing suite) passes.
-- Run seed script: `npm run seed:superadmin -- --email=<your-verified-email>`. Verify console output and DB role=superadmin.
-- Boot server. As the superadmin, hit:
-  - `GET /api/admin/users?page=1&limit=20` → paginated list, role field visible.
-  - `GET /api/admin/users/<some-id>` → detail with storage/file/session counts.
-  - `GET /api/admin/overview` → counters return valid shape.
-- As a regular user, hit `GET /api/admin/users` → 403 `INSUFFICIENT_ROLE`.
-- Manually set a user's `suspendedAt = ISODate('2026-01-01T00:00:00Z')` in Atlas, then try to log in or use a session → 403 `ACCOUNT_SUSPENDED`, cookie cleared.
-
-### After PR 2
-- Promote a second user to admin via `PATCH /admin/users/:id/role` → confirm role updated, next request from that user reaches admin routes.
-- Suspend a user → confirm `suspendedAt` set, sessions revoked, login blocked.
-- Force-logout a user → confirm sessions count returned matches DB.
-- Soft-delete a user → confirm `deletedAt` set, login blocked; files still on disk.
-- Hard-delete a user with at least 1 file + 1 directory → confirm User/File/Directory/Session docs gone, disk files gone, response payload tallies match.
-- Soft-delete a user, then restore them → confirm `deletedAt` cleared, user can log in again. If they were also suspended before deletion, confirm `suspendedAt` is preserved and they are still locked out until unsuspended.
-- Try to restore a user who is not soft-deleted → 400 `INVALID_INPUT`.
-- Try to demote the only superadmin → 403 `LAST_SUPERADMIN`.
-- Try to suspend self → 403 `CANNOT_ACT_ON_SELF`.
-- As admin (not superadmin), try to suspend another admin → 403 `CANNOT_ACT_ON_PEER`.
-
-### Smoke test the regression surface
-- Existing auth flows (login, logout, OAuth, /me) still work — `authenticate` middleware changes shouldn't break them.
-- Existing file/directory CRUD for regular users unaffected — admin code is fully additive.
-
----
-
-## Post-merge housekeeping
-
-- Apply Atlas schema mirror manually for `User.role`, `User.suspendedAt`, `User.suspendedBy`, `User.deletedAt`.
-- Document the seed script invocation in `README.md` under a new "First Deploy" or "Bootstrapping Admin" section.
-- Consider an ADR under `docs/adr/` recording the role-vs-permissions choice and last-superadmin guard for future engineers (optional but recommended).
+- Promote a second user via `PATCH /admin/users/:id/role` → next request from that user reaches admin routes (role is read from `req.user.role` per request; no session invalidation needed).
+- Suspend a user → `suspendedAt` set, sessions revoked, subsequent login attempts return `403 ACCOUNT_SUSPENDED`.
+- Force-logout a user → response `{ sessionsRevoked: N }` matches `Session.deleteMany` count.
+- Soft-delete → `deletedAt` set, login blocked with `UNAUTHORIZED_ACCESS`; files remain on disk.
+- Hard-delete a user with at least 1 file + 1 directory → User/File/Directory/Session docs gone, disk files removed (or warn-logged on failure), response tallies match.
+- Soft-delete then restore → `deletedAt` cleared. If the user was suspended before deletion, `suspendedAt` is preserved and they stay locked out until unsuspended.
+- Restore a user who is not soft-deleted → `400 INVALID_INPUT`.
+- Suspend self → `403 CANNOT_ACT_ON_SELF`.
+- As admin, try to suspend another admin → `403 CANNOT_ACT_ON_PEER` (route gate also blocks via `requireSuperadmin()`, but the service-layer hierarchy check is the durable defense).
+- Regression surface: existing auth flows and per-user file/directory CRUD are unchanged — admin code is fully additive.
 
 ---

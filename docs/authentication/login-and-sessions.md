@@ -32,11 +32,15 @@ The login logic uses the standard Controller-Service pattern but introduces comp
   1. Queries MongoDB. Note: Because `password` has `select: false` in the schema for security, the service explicitly adds an "additive query" (`.select('+password')`) so bcrypt can compare the hashes.
   2. **Provider Guard:** Checks `if (user.provider !== "email")`. OAuth-provisioned users (e.g., Google) have no stored password — without this guard, `bcrypt.compare` would throw against an undefined hash. Rejects with `400 PROVIDER_MISMATCH` telling the user to sign in via their OAuth provider instead.
   3. **Security Edge Case:** Checks `if (!user.isVerified)`. This explicitly prevents malicious actors from registering a fake email address and logging in with a matching password during the 1-hour auto-deletion grace period.
-  4. Validates the password using Mongoose's built-in `user.comparePassword(password)`.
-  5. Counts the number of active sessions for this user in the database.
-  6. **Max Devices Check:** If `activeSessionCount` exceeds `MAX_ALLOWED_DEVICES` (imported from `env.js`), the oldest session is evicted to keep concurrent-device counts bounded.
-  7. Creates a `Session` document in MongoDB with the enriched `deviceInfo`.
-  8. Returns the `session._id` back to the Controller.
+  4. **Lifecycle gate.** Rejects locked-out accounts **before** the bcrypt comparison runs:
+     - `user.deletedAt != null` → `401 UNAUTHORIZED_ACCESS` ("Account no longer exists") — surfaced as a generic unauthorized so the existence of a soft-deleted account is not leaked.
+     - `user.suspendedAt != null` → `403 ACCOUNT_SUSPENDED` ("Account is suspended") — explicit, distinct error so the client can render a tailored message.
+     The same two checks live in the `authenticate` middleware for already-issued sessions; duplicating them in `loginUser` covers the credential-check path that runs before any session exists. Order matches the middleware (deleted takes precedence over suspended). Closes issue #29.
+  5. Validates the password using Mongoose's built-in `user.comparePassword(password)`.
+  6. Counts the number of active sessions for this user in the database.
+  7. **Max Devices Check:** If `activeSessionCount` exceeds `MAX_ALLOWED_DEVICES` (imported from `env.js`), the oldest session is evicted to keep concurrent-device counts bounded.
+  8. Creates a `Session` document in MongoDB with the enriched `deviceInfo`.
+  9. Returns the `session._id` back to the Controller.
 
 ---
 

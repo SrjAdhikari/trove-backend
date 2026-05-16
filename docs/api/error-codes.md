@@ -1,6 +1,6 @@
 # Error Codes
 
-> **Status:** As-of 2026-04-30. This document is a glossary that drifts as the codebase evolves — refresh it when adding or removing codes from `src/constants/appErrorCode.js`.
+> **Status:** As-of 2026-05-15. This document is a glossary that drifts as the codebase evolves — refresh it when adding or removing codes from `src/constants/appErrorCode.js`.
 
 The TroveCloud backend returns structured errors with stable, machine-readable codes. The frontend consumes these codes to drive UI behavior (which form to redirect to, which message to show, when to retry). This document is the contract: the source of truth for what each code means and where it's thrown.
 
@@ -45,11 +45,24 @@ Sourced from `src/constants/appErrorCode.js` (an `Object.freeze`-ed enum). Liste
 
 | Code                        | Typical HTTP | Meaning                                                                           | Where thrown                                                                                                                     |
 | --------------------------- | ------------ | --------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `ACCOUNT_SUSPENDED`         | 403          | Authenticated user's account has `suspendedAt != null`. Returned for both fresh logins on a suspended account and any existing-session request after suspension; the auth cookie is cleared. | `authenticate` middleware; `loginUser` in `auth.service.js`                                                                       |
+| `GITHUB_EMAIL_NOT_VERIFIED` | 400          | GitHub's `/user/emails` response had no entry that was both `primary: true` and `verified: true`. | `verifyGithubCodeAndFetchProfile` in `src/lib/githubAuth.js`                                                                      |
 | `GOOGLE_EMAIL_NOT_VERIFIED` | 400          | Google's ID-token payload reported `email_verified: false`.                       | `loginOrCreateGoogleUser` in `auth.service.js`                                                                                   |
 | `INVALID_CREDENTIALS`       | 401          | Email not found, or password didn't match.                                        | `loginUser` in `auth.service.js`                                                                                                 |
 | `PROVIDER_MISMATCH`         | 400 / 409    | Sign-in or reset attempted with a method that doesn't match the account's stored provider. | `loginUser`, `forgotPassword`, `resetPassword` (400, OAuth user trying password / reset); `loginOrCreateOAuthUser` (409, OAuth attempt collides with non-matching provider) |
-| `UNAUTHORIZED_ACCESS`       | 401          | No valid session cookie on a route that requires authentication.                  | `authenticate` middleware                                                                                                        |
+| `UNAUTHORIZED_ACCESS`       | 401          | No valid session cookie on a route that requires authentication, or the underlying user has been soft-deleted (`deletedAt != null`). The deleted case is surfaced as a generic unauthorized so account existence is not leaked. | `authenticate` middleware; `loginUser` in `auth.service.js` (soft-deleted account at credential check) |
 | `USER_NOT_VERIFIED`         | 400          | Login attempted on an account whose email-OTP was never confirmed.                | `loginUser` in `auth.service.js`                                                                                                 |
+
+### Authorization
+
+Returned by the admin subsystem (`/api/admin/*`). The route gate (`requireRole` / `requireSuperadmin`) and the service-layer hierarchy checks (`assertCanActOn`, `assertNotSelf`) are independent — the service layer remains the durable defense even if route gates are ever relaxed.
+
+| Code                   | Typical HTTP | Meaning                                                                                                                                                          | Where thrown                                                                                            |
+| ---------------------- | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `CANNOT_ACT_ON_PEER`   | 403          | Caller tried to mutate a user of equal or higher rank (e.g., admin trying to act on another admin, or anyone acting on a superadmin). Fail-closed on unknown roles. | `assertCanActOn` in `src/services/admin/user.service.js` (used by every mutation handler)               |
+| `CANNOT_ACT_ON_SELF`   | 403          | Caller tried to apply a destructive admin action to their own account (suspend / change role / soft-delete / hard-delete). Force-logout self is deliberately allowed. | `assertNotSelf` in `src/services/admin/user.service.js`                                                 |
+| `INSUFFICIENT_ROLE`    | 403          | Caller's role rank is below the route's minimum (e.g., a `user` hitting `/admin/*`, or an `admin` hitting a superadmin-only mutation route).                       | `requireRole` factory in `src/middlewares/authorize.middleware.js`                                      |
+| `LAST_SUPERADMIN`      | 403          | Reserved for a "cannot demote/delete the last superadmin" guard. Defined but currently unused — see [Currently unused codes](#currently-unused-codes).             | (not currently thrown)                                                                                  |
 
 ### User
 
@@ -57,7 +70,7 @@ Sourced from `src/constants/appErrorCode.js` (an `Object.freeze`-ed enum). Liste
 | --------------------- | ------------ | ------------------------------------------------------------------- | ---------------------------------------------- |
 | `ACCESS_DENIED`       | 403          | Authenticated user attempted to access a resource they don't own.   | Service layer ownership checks                 |
 | `USER_ALREADY_EXISTS` | 409          | Registration attempted with an email that's already verified.       | `createUser`, `resendOTP` in `auth.service.js` |
-| `USER_NOT_FOUND`      | 404          | Lookup for a specific user (by email, in OTP / reset flows) failed. | `verifyOTP`, `resendOTP`, `forgotPassword`, `resetPassword` in `auth.service.js` |
+| `USER_NOT_FOUND`      | 404          | Lookup for a specific user (by email, in OTP / reset flows, or by id in admin actions) failed. | `verifyOTP`, `resendOTP`, `forgotPassword`, `resetPassword` in `auth.service.js`; `getUserById` and `findUserById` (shared by every mutation handler) in `src/services/admin/user.service.js` |
 
 ### File
 
@@ -103,7 +116,7 @@ Sourced from `src/constants/appErrorCode.js` (an `Object.freeze`-ed enum). Liste
 | `ALL_FIELDS_REQUIRED` | 400          | Required body fields missing (controllers using truthy checks).                                               | `registerHandler`, `verifyOTPHandler`, `loginHandler`, `resetPasswordHandler` |
 | `EMAIL_REQUIRED`      | 400          | Specifically the `email` field is missing.                                                                    | `resendOTPHandler`, `forgotPasswordHandler`                        |
 | `INTERNAL_ERROR`      | 500          | Catch-all for unexpected errors. Sets `isOperational: false` so the original message is hidden in production. | `globalErrorHandler` fallback when no other handler matches        |
-| `INVALID_INPUT`       | 400          | Body validation failed for a non-required-field reason (wrong type, out of range, malformed encoding).        | Various handlers (`directory.controller.js`, `file.controller.js`) |
+| `INVALID_INPUT`       | 400          | Body validation failed for a non-required-field reason (wrong type, out of range, malformed encoding), or an admin action was rejected because the target's lifecycle state precludes it (e.g., suspending an already-suspended user, restoring a user who is not soft-deleted, unknown role/status filter). | Various handlers (`directory.controller.js`, `file.controller.js`); state-guard branches across the admin mutation handlers in `src/services/admin/user.service.js` |
 | `ROUTE_NOT_FOUND`     | 404          | Requested URL didn't match any registered route.                                                              | 404 handler in `app.js`                                            |
 
 ### Drive Import
@@ -184,6 +197,8 @@ Frontend code should always switch on `code` to drive UI behavior. Never parse `
 ### Currently unused codes
 
 `INVALID_TOKEN` and `TOKEN_EXPIRED` are mapped from JWT errors in the global handler but never exercised, since the project uses session-cookie auth, not JWT. They're kept in the handler for forward compat — if the project ever migrates to JWT, the codes are ready.
+
+`LAST_SUPERADMIN` is defined in `appErrorCode.js` but is not thrown anywhere today. The deployment runs a single-superadmin topology — the only scenarios the guard would catch (demoting or deleting the last superadmin) cannot arise without first creating a second superadmin. Kept in the enum so the guard can be re-added without churning the error contract if topology ever changes.
 
 ### Deferred / planned codes
 

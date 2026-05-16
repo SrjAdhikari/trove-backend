@@ -1,8 +1,8 @@
 # Transaction Patterns
 
-> **Status:** As-built (2026-04-30). Documents the MongoDB transaction usage adopted in PRs #11 (Google OAuth), #14 (shared OAuth helper), and #25 (password reset). Used in `verifyOTP` since the original auth implementation.
+> **Status:** As-built (2026-05-15). Documents the MongoDB transaction usage adopted in PRs #11 (Google OAuth), #14 (shared OAuth helper), #25 (password reset), and #33 (admin suspend / soft-delete / hard-delete). Used in `verifyOTP` since the original auth implementation.
 
-Captures a subtle pattern that appears in three places in the codebase: when a flow needs to **atomically commit two or more cross-document writes** (User + Directory creation, User update + Session wipe), the database writes happen inside a `withTransaction` block. Where a flow also issues a `Session`, that **`Session.create` happens outside the transaction**. This document explains why, and what to do if a fourth call site ever needs the same shape.
+Captures a subtle pattern that appears across six places in the codebase: when a flow needs to **atomically commit two or more cross-document writes** (User + Directory creation, User update + Session wipe, multi-collection user purge), the database writes happen inside a `withTransaction` block. Where a flow also issues a `Session`, that **`Session.create` happens outside the transaction**. Where a flow also performs non-idempotent side effects on disk, **those happen outside the transaction too**. This document explains why, and what to do if a new call site needs the same shape.
 
 ---
 
@@ -84,7 +84,7 @@ The "transaction commits, Session.create fails" case is the only one with **part
 
 ## 📍 Where It's Used
 
-Three call sites in the codebase as of 2026-04-30:
+Six call sites in the codebase as of 2026-05-15:
 
 ### 1. `verifyOTP` in `src/services/auth.service.js`
 
@@ -115,7 +115,21 @@ try {
 
 If `Session.deleteMany` fails after `user.save`, the whole thing rolls back — the password change is reverted and the OTP fields stay populated, so the user can retry the same call cleanly with the same code. Without the transaction, a partial failure would leave the password updated but old sessions alive and the OTP consumed — a worse recovery story for the user. See PR #25 for the design discussion.
 
-The three call sites are **structurally similar but not identical** — `verifyOTP` and `resetPassword` mutate an existing user, OAuth creates a fresh one; only `resetPassword` touches a second collection. A premature abstraction extracting them into a single helper would have to branch on "create vs update" and "single vs cross-collection" inside, which is exactly the kind of false-DRY that makes code worse. The pattern is documented; the three call sites stay separate.
+### 4. `suspendUser` in `src/services/admin/user.service.js`
+
+Setting `suspendedAt = now` and revoking every active session for the target need to land together — a half-applied suspension where the timestamp is set but the user's existing sessions stay alive would leave the locked-out user temporarily able to use the app until those sessions expire on their own. Same shape as `resetPassword`: `user.save({ session })` plus `Session.deleteMany({ userId }, { session })`. Shipped in PR #33.
+
+### 5. `softDeleteUser` in `src/services/admin/user.service.js`
+
+Mirror image of suspend: set `deletedAt = now` and `Session.deleteMany` for the target in one transaction. Files and directories deliberately stay until hard-delete or restore.
+
+### 6. `hardDeleteUser` in `src/services/admin/user.service.js`
+
+The widest transaction in the codebase — a four-collection wipe (`Session.deleteMany` → `File.deleteMany` → `Directory.deleteMany` → `User.deleteOne`) all keyed by `userId`. Inside the same transaction, a pre-read `File.find(..., '_id extension')` snapshots the list of physical files to remove; that list is captured into a closure variable.
+
+**Physical-file cleanup happens outside the transaction** via `Promise.allSettled(filesToWipe.map(file => rm(...)))`. Same reasoning as Session.create being outside: `rm` is a non-idempotent side effect against the filesystem, and `withTransaction`'s automatic retries would re-issue the deletes on a `WriteConflict`. `allSettled` ensures one disk failure doesn't stop the other deletes from running; rejected promises are warn-logged but never re-thrown — the DB is the source of truth and orphaned bytes are reconcilable later. Shipped in PR #33.
+
+The six call sites are **structurally similar but not identical**. `verifyOTP`, `resetPassword`, `suspendUser`, and `softDeleteUser` all mutate an existing user; OAuth new-user creates a fresh one; `hardDeleteUser` is the multi-collection variant that also performs irreversible disk work outside the transaction. The "Session.create outside" and "filesystem cleanup outside" rules are the same principle — anything that isn't safely retry-able stays out. A premature abstraction extracting them into a single helper would have to branch on "create vs update", "single vs cross-collection", and "with vs without external side effects" inside, which is exactly the kind of false-DRY that makes code worse. The pattern is documented; the call sites stay separate.
 
 ---
 
@@ -146,6 +160,9 @@ A few details worth knowing if you're new to MongoDB transactions in Mongoose:
 - `src/services/auth.service.js` — `verifyOTP` (since project inception)
 - `src/services/oauth.service.js` — `loginOrCreateOAuthUser` new-user branch (since PR #14, originally PR #11)
 - `src/services/auth.service.js` — `resetPassword` (since PR #25; password update + session wipe atomic)
+- `src/services/admin/user.service.js` — `suspendUser` (since PR #33; suspendedAt + session wipe atomic)
+- `src/services/admin/user.service.js` — `softDeleteUser` (since PR #33; deletedAt + session wipe atomic)
+- `src/services/admin/user.service.js` — `hardDeleteUser` (since PR #33; multi-collection wipe inside the transaction, disk-file cleanup outside via `Promise.allSettled`)
 - `src/services/directory.service.js` — recursive directory delete (separate pattern; transaction wraps DB deletes, physical-file cleanup happens outside via `Promise.allSettled`)
 
 ### Deployment requirement

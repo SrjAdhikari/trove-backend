@@ -11,6 +11,7 @@ Please navigate to the specific domain you need below:
 - [`transaction-patterns.md`](./architecture/transaction-patterns.md) - Atomic User+Directory creation, why Session.create runs outside the transaction, Mongoose mechanics.
 - [`email-template-system.md`](./architecture/email-template-system.md) - Transactional email composition model, brand tokens, client-compatibility rules.
 - [`drive-import.md`](./architecture/drive-import.md) - As-built design for the Google Drive import feature (`POST /api/drive/import`).
+- [`rbac-admin.md`](./architecture/rbac-admin.md) - RBAC + admin subsystem (`/api/admin/*`): roles, lifecycle fields, authorize middleware, mutation cascades.
 
 ### 📂 [Authentication](./authentication)
 
