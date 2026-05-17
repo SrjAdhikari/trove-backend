@@ -37,9 +37,12 @@ const getSystemOverview = async () => {
 		User.countDocuments({ suspendedAt: null, deletedAt: null }),
 		User.countDocuments({ suspendedAt: { $ne: null }, deletedAt: null }),
 		User.countDocuments({ deletedAt: { $ne: null } }),
-		User.countDocuments({ role: ROLES.USER, deletedAt: null }),
-		User.countDocuments({ role: ROLES.ADMIN, deletedAt: null }),
-		User.countDocuments({ role: ROLES.SUPERADMIN, deletedAt: null }),
+
+		// byRole is a population view — no lifecycle filter — so the invariant
+		// `users.total === byRole.user + byRole.admin + byRole.superadmin` holds.
+		User.countDocuments({ role: ROLES.USER }),
+		User.countDocuments({ role: ROLES.ADMIN }),
+		User.countDocuments({ role: ROLES.SUPERADMIN }),
 		File.aggregate([
 			{
 				$group: {
