@@ -41,7 +41,8 @@
 		"google-auth-library": "^10.6.2",
 		"mongoose": "^9.2.4",
 		"resend": "^6.9.4",
-		"ua-parser-js": "^2.0.9"
+		"ua-parser-js": "^2.0.9",
+		"zod": "^4.4.3"
 	},
 	"devDependencies": {
 		"mongodb-memory-server": "^11.1.0",
