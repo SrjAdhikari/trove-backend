@@ -145,3 +145,5 @@ storage/
 .ai/
 CLAUDE.md
 tasks/
+
+bash.exe.stackdump
