@@ -21,7 +21,7 @@ Both endpoints are **public** (no `authenticate` middleware) — the user is by 
 - **Route:** `POST /api/auth/forgot-password`
 - **Payload:** `{ email }`
 - **Flow:**
-  1. Controller validates that `email` is present (`EMAIL_REQUIRED` if missing).
+  1. `validateRequestBody(forgotPasswordSchema)` validates `email` at the route (`400 VALIDATION_ERROR` if missing or malformed).
   2. Calls `forgotPassword(email)` in Auth Service.
   3. Service queries `User.findOne({ email, isVerified: true })` — unverified accounts are filtered out (the registration flow handles them) and surface as `USER_NOT_FOUND`.
   4. **Provider Guard:** Rejects OAuth-provisioned users with `400 PROVIDER_MISMATCH`. A Google/GitHub user has no stored password, so a reset code would be useless and confusing — the message steers them to their actual sign-in method.
@@ -35,7 +35,7 @@ Both endpoints are **public** (no `authenticate` middleware) — the user is by 
 - **Route:** `POST /api/auth/reset-password`
 - **Payload:** `{ email, otp, newPassword }`
 - **Flow:**
-  1. Controller validates all three fields (`ALL_FIELDS_REQUIRED` if any missing).
+  1. `validateRequestBody(resetPasswordSchema)` validates `email`, `otp`, and `newPassword` at the route (`400 VALIDATION_ERROR` if any are missing or malformed).
   2. Calls `resetPassword(email, otp, newPassword)` in Auth Service.
   3. Service fetches the user with `.select("+otp +otpExpiresAt")` to bypass the schema's `select: false` security on those fields.
   4. **User filter:** Same `{ email, isVerified: true }` query as `forgotPassword` — keeps both endpoints consistent on which accounts are eligible.
@@ -45,7 +45,7 @@ Both endpoints are **public** (no `authenticate` middleware) — the user is by 
   8. **Atomic Commit:** Opens a MongoDB transaction (mirrors `verifyOTP`'s pattern) and runs three writes inside the callback:
      - Sets `user.password = newPassword` — Mongoose's pre-save hook re-hashes via `bcrypt`.
      - Sets `user.otp = undefined` and `user.otpExpiresAt = undefined` — clears the reset code so it can't be replayed.
-     - `await user.save({ session })` — Mongoose schema's `minlength: 8` enforces password strength; failure surfaces as `422 VALIDATION_ERROR` via the global error handler.
+     - `await user.save({ session })` — password strength was already enforced by the Zod `resetPasswordSchema` at the route (min 8 + composition, `400 VALIDATION_ERROR`); Mongoose's `minlength: 8` remains a last-resort backstop (`422 VALIDATION_ERROR`).
      - `await Session.deleteMany({ userId: user._id }, { session })` — wipes every active session for the user.
   9. Returns `200 OK` with a success message. The user must log in again on every device.
 

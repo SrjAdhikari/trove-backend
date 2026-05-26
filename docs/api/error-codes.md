@@ -95,10 +95,10 @@ Returned by the admin subsystem (`/api/admin/*`). The route gate (`requireRole` 
 | Code                  | Typical HTTP | Meaning                                                                          | Where thrown                                                           |
 | --------------------- | ------------ | -------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
 | `DUPLICATE_FIELD`     | 409          | MongoDB E11000 duplicate-key error (e.g., trying to register an existing email). | Auto-converted by `globalErrorHandler` from MongoDB E11000             |
-| `INVALID_GITHUB_CODE` | 400          | GitHub authorization-code exchange failed, or the `code` body field was missing. | `verifyGithubCodeAndFetchProfile`, `githubOAuthHandler`                |
+| `INVALID_GITHUB_CODE` | 400          | GitHub authorization-code exchange failed. (A missing or non-string `code` is now rejected upstream as `VALIDATION_ERROR`.) | `verifyGithubCodeAndFetchProfile`                |
 | `INVALID_ID`          | 400          | Path parameter wasn't a valid Mongo ObjectId.                                    | `validateId` middleware, also auto-converted from Mongoose `CastError` |
-| `INVALID_ID_TOKEN`    | 400          | Google ID-token verification failed, or `idToken` body field was missing.        | `verifyGoogleIdToken`, `googleOAuthHandler`                            |
-| `VALIDATION_ERROR`    | 422          | Mongoose schema validation failed during `.save()` or `.create()`.               | Auto-converted by `globalErrorHandler` from Mongoose `ValidationError` |
+| `INVALID_ID_TOKEN`    | 400          | Google ID-token verification failed. (A missing or non-string `idToken` is now rejected upstream as `VALIDATION_ERROR`.)        | `verifyGoogleIdToken`                            |
+| `VALIDATION_ERROR`    | 400 / 422    | Request body failed Zod validation at the route (`400`), or Mongoose schema validation failed on `.save()`/`.create()` (`422`, auto-converted).               | `validateRequestBody` middleware (`400`); auto-converted from Mongoose `ValidationError` (`422`) |
 
 ### OTP
 
@@ -113,8 +113,6 @@ Returned by the admin subsystem (`/api/admin/*`). The route gate (`requireRole` 
 
 | Code                  | Typical HTTP | Meaning                                                                                                       | Where thrown                                                       |
 | --------------------- | ------------ | ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| `ALL_FIELDS_REQUIRED` | 400          | Required body fields missing (controllers using truthy checks).                                               | `registerHandler`, `verifyOTPHandler`, `loginHandler`, `resetPasswordHandler` |
-| `EMAIL_REQUIRED`      | 400          | Specifically the `email` field is missing.                                                                    | `resendOTPHandler`, `forgotPasswordHandler`                        |
 | `INTERNAL_ERROR`      | 500          | Catch-all for unexpected errors. Sets `isOperational: false` so the original message is hidden in production. | `globalErrorHandler` fallback when no other handler matches        |
 | `INVALID_INPUT`       | 400          | Body validation failed for a non-required-field reason (wrong type, out of range, malformed encoding), or an admin action was rejected because the target's lifecycle state precludes it (e.g., suspending an already-suspended user, restoring a user who is not soft-deleted, unknown role/status filter). | Various handlers (`directory.controller.js`, `file.controller.js`); state-guard branches across the admin mutation handlers in `src/services/admin/user.service.js` |
 | `ROUTE_NOT_FOUND`     | 404          | Requested URL didn't match any registered route.                                                              | 404 handler in `app.js`                                            |

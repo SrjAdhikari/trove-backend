@@ -49,7 +49,7 @@ The login logic uses the standard Controller-Service pattern but introduces comp
 - **Route:** `POST /api/auth/google`
 - **Payload:** `{ idToken }` — Google ID token obtained from the frontend's Google Sign-In button (credentials response).
 - **Flow:**
-  1. Validates that `idToken` is present (rejects with `400 INVALID_ID_TOKEN` otherwise).
+  1. `validateRequestBody(googleOAuthSchema)` ensures `idToken` is a non-empty string at the route (rejects with `400 VALIDATION_ERROR` otherwise).
   2. Builds the `deviceInfo` object using the shared `buildDeviceInfo(req)` helper — the same helper used by the password login path, extracted to `src/utils/deviceInfo.js`.
   3. Calls `loginOrCreateGoogleUser(idToken, deviceInfo)` in Auth Service.
   4. Sets the same `httpOnly` session cookie as the password path.
@@ -69,7 +69,7 @@ The login logic uses the standard Controller-Service pattern but introduces comp
 - **Route:** `POST /api/auth/github`
 - **Payload:** `{ code }` — GitHub OAuth authorization code delivered to the frontend's callback URL after the user approves access on github.com.
 - **Flow:**
-  1. Validates that `code` is present (rejects with `400 INVALID_GITHUB_CODE` otherwise).
+  1. `validateRequestBody(githubOAuthSchema)` ensures `code` is a non-empty string at the route (rejects with `400 VALIDATION_ERROR` otherwise).
   2. Builds the `deviceInfo` object using the shared `buildDeviceInfo(req)` helper.
   3. Calls `loginOrCreateGithubUser(code, deviceInfo)` in Auth Service.
   4. Sets the same `httpOnly` session cookie as the password and Google paths.

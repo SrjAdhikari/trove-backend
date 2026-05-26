@@ -37,7 +37,7 @@ Source: `src/models/user.model.js`. Atlas mirror: `src/schemas/user.schema.js`.
 
 | Field                   | Type     | Required                  | Default   | Notes                                                         |
 | ----------------------- | -------- | ------------------------- | --------- | ------------------------------------------------------------- |
-| `name`                  | String   | yes                       | —         | `trim`, `minlength: 3`, `maxlength: 50`                       |
+| `name`                  | String   | yes                       | —         | `trim`, `maxlength: 100` (the 3–50 product rule lives in the Zod `registerSchema`) |
 | `email`                 | String   | yes                       | —         | `trim`, `lowercase`, unique index, regex-validated            |
 | `password`              | String   | only if `provider=email`  | —         | `minlength: 8`, `select: false`, bcrypt-hashed pre-save       |
 | `rootDirId`             | ObjectId | no                        | —         | Set during `verifyOTP` (email path) or OAuth new-user branch  |

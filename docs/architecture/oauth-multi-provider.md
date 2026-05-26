@@ -222,8 +222,8 @@ Quick smoke tests when working on this area:
 - **Sign in with Google as the same user again** → 200; new session; profile fields refreshed only if Google returned different name/picture.
 - **Sign in with GitHub using an account whose email matches a Google-provisioned user** → 409 `PROVIDER_MISMATCH`.
 - **Sign in with email/password using an email that's actually a Google account** → 400 `PROVIDER_MISMATCH`.
-- **POST `/api/auth/google` with no body** → 400 `INVALID_ID_TOKEN`.
-- **POST `/api/auth/github` with `code: {}` (object)** → 400 `INVALID_GITHUB_CODE` (currently relies on truthy check; type-check is deferred).
+- **POST `/api/auth/google` with no body** → 400 `VALIDATION_ERROR`.
+- **POST `/api/auth/github` with `code: {}` (object)** → 400 `VALIDATION_ERROR` (the `githubOAuthSchema` now rejects a non-string `code` at the route — the previously-deferred type-check is implemented).
 
 ---
 
