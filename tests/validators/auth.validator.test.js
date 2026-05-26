@@ -220,6 +220,10 @@ describe("googleOAuthSchema", () => {
 		expect(googleOAuthSchema.safeParse({ idToken: "" }).success).toBe(false);
 	});
 
+	it("rejects a whitespace-only idToken", () => {
+		expect(googleOAuthSchema.safeParse({ idToken: "   " }).success).toBe(false);
+	});
+
 	it("rejects a non-string idToken (object injection)", () => {
 		expect(
 			googleOAuthSchema.safeParse({ idToken: { $ne: "" } }).success,
@@ -234,6 +238,10 @@ describe("githubOAuthSchema", () => {
 
 	it("rejects an empty code", () => {
 		expect(githubOAuthSchema.safeParse({ code: "" }).success).toBe(false);
+	});
+
+	it("rejects a whitespace-only code", () => {
+		expect(githubOAuthSchema.safeParse({ code: "   " }).success).toBe(false);
 	});
 
 	it("rejects a non-string code (object injection)", () => {

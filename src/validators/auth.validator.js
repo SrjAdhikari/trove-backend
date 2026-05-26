@@ -57,11 +57,11 @@ const resetPasswordSchema = z.object({
 });
 
 const googleOAuthSchema = z.object({
-	idToken: z.string().nonempty("ID token is required"),
+	idToken: z.string().trim().nonempty("ID token is required"),
 });
 
 const githubOAuthSchema = z.object({
-	code: z.string().nonempty("Authorization code is required"),
+	code: z.string().trim().nonempty("Authorization code is required"),
 });
 
 export {
