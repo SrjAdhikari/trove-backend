@@ -1,9 +1,6 @@
 //* src/controllers/auth.controller.js
 
-import AppError from "../errors/AppError.js";
-
 import httpStatus from "../constants/httpStatus.js";
-import appErrorCode from "../constants/appErrorCode.js";
 
 import {
 	createUser,
@@ -21,23 +18,10 @@ import {
 import { setAuthCookie, clearAuthCookie } from "../utils/cookies.js";
 import buildDeviceInfo from "../utils/deviceInfo.js";
 
-const { BAD_REQUEST, CREATED, OK } = httpStatus;
-const {
-	ALL_FIELDS_REQUIRED,
-	EMAIL_REQUIRED,
-	INVALID_ID_TOKEN,
-	INVALID_GITHUB_CODE,
-} = appErrorCode;
+const { CREATED, OK } = httpStatus;
 
 const registerHandler = async (req, res) => {
 	const { name, email, password } = req.body;
-	if (!name || !email || !password) {
-		throw new AppError(
-			"All fields are required",
-			BAD_REQUEST,
-			ALL_FIELDS_REQUIRED,
-		);
-	}
 
 	await createUser(name, email, password);
 
@@ -50,14 +34,6 @@ const registerHandler = async (req, res) => {
 const verifyOTPHandler = async (req, res) => {
 	const { email, otp } = req.body;
 
-	if (!email || !otp) {
-		throw new AppError(
-			"All fields are required",
-			BAD_REQUEST,
-			ALL_FIELDS_REQUIRED,
-		);
-	}
-
 	await verifyOTP(email, otp);
 
 	res.status(CREATED).json({
@@ -69,10 +45,6 @@ const verifyOTPHandler = async (req, res) => {
 const resendOTPHandler = async (req, res) => {
 	const { email } = req.body;
 
-	if (!email) {
-		throw new AppError("Email is required", BAD_REQUEST, EMAIL_REQUIRED);
-	}
-
 	await resendOTP(email);
 
 	res.status(OK).json({
@@ -82,11 +54,7 @@ const resendOTPHandler = async (req, res) => {
 };
 
 const forgotPasswordHandler = async (req, res) => {
-	const { email } = req.body ?? {};
-
-	if (!email) {
-		throw new AppError("Email is required", BAD_REQUEST, EMAIL_REQUIRED);
-	}
+	const { email } = req.body;
 
 	await forgotPassword(email);
 
@@ -97,15 +65,7 @@ const forgotPasswordHandler = async (req, res) => {
 };
 
 const resetPasswordHandler = async (req, res) => {
-	const { email, otp, newPassword } = req.body ?? {};
-
-	if (!email || !otp || !newPassword) {
-		throw new AppError(
-			"All fields are required",
-			BAD_REQUEST,
-			ALL_FIELDS_REQUIRED,
-		);
-	}
+	const { email, otp, newPassword } = req.body;
 
 	await resetPassword(email, otp, newPassword);
 
@@ -117,13 +77,6 @@ const resetPasswordHandler = async (req, res) => {
 
 const loginHandler = async (req, res) => {
 	const { email, password } = req.body;
-	if (!email || !password) {
-		throw new AppError(
-			"All fields are required",
-			BAD_REQUEST,
-			ALL_FIELDS_REQUIRED,
-		);
-	}
 
 	const deviceInfo = buildDeviceInfo(req);
 	const session = await loginUser(email, password, deviceInfo);
@@ -157,11 +110,7 @@ const logoutAllHandler = async (req, res) => {
 };
 
 const googleOAuthHandler = async (req, res) => {
-	const { idToken } = req.body ?? {};
-
-	if (!idToken) {
-		throw new AppError("ID token is required", BAD_REQUEST, INVALID_ID_TOKEN);
-	}
+	const { idToken } = req.body;
 
 	const deviceInfo = buildDeviceInfo(req);
 	const { session, isNewUser } = await loginOrCreateGoogleUser(
@@ -180,10 +129,7 @@ const googleOAuthHandler = async (req, res) => {
 };
 
 const githubOAuthHandler = async (req, res) => {
-	const { code } = req.body ?? {};
-	if (!code) {
-		throw new AppError("Code is required", BAD_REQUEST, INVALID_GITHUB_CODE);
-	}
+	const { code } = req.body;
 
 	const deviceInfo = buildDeviceInfo(req);
 	const { session, isNewUser } = await loginOrCreateGithubUser(

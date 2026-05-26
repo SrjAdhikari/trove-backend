@@ -11,9 +11,8 @@ const userSchema = {
 			},
 			name: {
 				bsonType: "string",
-				minLength: 3,
-				maxLength: 50,
-				description: "User name must be a string between 3 and 50 characters",
+				maxLength: 100,
+				description: "User name must be a string of at most 100 characters",
 			},
 			email: {
 				bsonType: "string",
