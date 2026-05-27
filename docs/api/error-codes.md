@@ -33,7 +33,7 @@ Response shape:
 - `code` is one of the values listed in this document, sourced from `src/constants/appErrorCode.js`.
 - `message` is human-readable but not stable — frontend code should switch on `code`, never on `message`.
 
-The global handler also auto-converts a few well-known framework errors (Mongoose `ValidationError`, MongoDB `E11000` duplicate-key, JWT errors) into the same shape — see [the conversion table](#-error-codes-from-framework-errors).
+The global handler also auto-converts a few well-known framework errors (Mongoose `ValidationError`, MongoDB `E11000` duplicate-key) into the same shape — see [the conversion table](#-error-codes-from-framework-errors).
 
 ---
 
@@ -141,11 +141,7 @@ The global handler maps a few well-known framework error types to clean `AppErro
 | Mongoose `CastError` (invalid ObjectId) | `INVALID_ID`       | 400  |
 | Mongoose `ValidationError`              | `VALIDATION_ERROR` | 422  |
 | MongoDB E11000 (duplicate key)          | `DUPLICATE_FIELD`  | 409  |
-| `JsonWebTokenError`                     | `INVALID_TOKEN`    | 401  |
-| `TokenExpiredError`                     | `TOKEN_EXPIRED`    | 401  |
 | Anything else (no matching handler)     | `INTERNAL_ERROR`   | 500  |
-
-The JWT mappings exist for forward compatibility — they aren't currently exercised by the codebase since auth is session-cookie based, not JWT.
 
 ---
 
@@ -194,7 +190,7 @@ Frontend code should always switch on `code` to drive UI behavior. Never parse `
 
 ### Currently unused codes
 
-`INVALID_TOKEN` and `TOKEN_EXPIRED` are mapped from JWT errors in the global handler but never exercised, since the project uses session-cookie auth, not JWT. They're kept in the handler for forward compat — if the project ever migrates to JWT, the codes are ready.
+`INVALID_TOKEN` and `TOKEN_EXPIRED` are defined in `appErrorCode.js` but not referenced anywhere today. The global handler previously mapped `JsonWebTokenError` / `TokenExpiredError` to them; that mapping was removed since the project uses session-cookie auth, not JWT. The codes are kept in the enum so they're ready if the project ever migrates to JWT.
 
 `LAST_SUPERADMIN` is defined in `appErrorCode.js` but is not thrown anywhere today. The deployment runs a single-superadmin topology — the only scenarios the guard would catch (demoting or deleting the last superadmin) cannot arise without first creating a second superadmin. Kept in the enum so the guard can be re-added without churning the error contract if topology ever changes.
 
