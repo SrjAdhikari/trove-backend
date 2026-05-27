@@ -1,12 +1,14 @@
 //* src/middlewares/validate.middleware.js
 
+import { isValidObjectId } from "mongoose";
+
 import AppError from "../errors/AppError.js";
 
 import httpStatus from "../constants/httpStatus.js";
 import appErrorCode from "../constants/appErrorCode.js";
 
 const { BAD_REQUEST } = httpStatus;
-const { VALIDATION_ERROR } = appErrorCode;
+const { VALIDATION_ERROR, INVALID_ID } = appErrorCode;
 
 /**
  * Builds a middleware that validates `req.body` against a Zod schema.
@@ -18,7 +20,7 @@ const { VALIDATION_ERROR } = appErrorCode;
  * @param {import("zod").ZodType} schema - Zod schema to validate the body with.
  * @returns {import("express").RequestHandler}
  */
-const validateRequestBody = (schema) => (req, res, next) => {
+const validateBody = (schema) => (req, res, next) => {
 	const result = schema.safeParse(req.body ?? {});
 
 	if (!result.success) {
@@ -33,4 +35,21 @@ const validateRequestBody = (schema) => (req, res, next) => {
 	next();
 };
 
-export default validateRequestBody;
+/**
+ * Validates if a given router parameter is a valid MongoDB ObjectId.
+ *
+ * @param {import("express").Request} req - Express request object.
+ * @param {import("express").Response} res - Express response object.
+ * @param {import("express").NextFunction} next - Express next middleware function.
+ * @param {string} id - The ID to validate.
+ * @throws {AppError} - If the value is not a valid ObjectId.
+ */
+const validateId = (req, res, next, id) => {
+	if (!isValidObjectId(id)) {
+		throw new AppError(`Invalid ID format: ${id}`, BAD_REQUEST, INVALID_ID);
+	}
+
+	next();
+};
+
+export { validateBody, validateId };

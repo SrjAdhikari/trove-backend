@@ -1,7 +1,12 @@
 import { describe, it, expect, vi } from "vitest";
 import { z } from "zod";
 
-import validate from "../../src/middlewares/validate.middleware.js";
+import mongoose from "mongoose";
+
+import {
+	validateBody,
+	validateId,
+} from "../../src/middlewares/validate.middleware.js";
 import AppError from "../../src/errors/AppError.js";
 
 const schema = z.object({
@@ -12,11 +17,11 @@ const schema = z.object({
 const run = (body) => {
 	const req = { body };
 	const next = vi.fn();
-	const invoke = () => validate(schema)(req, {}, next);
+	const invoke = () => validateBody(schema)(req, {}, next);
 	return { req, next, invoke };
 };
 
-describe("validate middleware", () => {
+describe("validateBody middleware", () => {
 	it("calls next and assigns normalized data back to req.body when valid", () => {
 		const { req, next, invoke } = run({
 			email: " Jane@Example.COM ",
@@ -71,5 +76,34 @@ describe("validate middleware", () => {
 	it("rejects a non-object body (string / array) with a clean AppError, no crash", () => {
 		expect(run("hello").invoke).toThrow(AppError);
 		expect(run([]).invoke).toThrow(AppError);
+	});
+});
+
+describe("validateId param callback", () => {
+	const runId = (id) => {
+		const next = vi.fn();
+		const invoke = () => validateId({}, {}, next, id);
+		return { next, invoke };
+	};
+
+	it("calls next for a valid ObjectId", () => {
+		const { next, invoke } = runId(new mongoose.Types.ObjectId().toString());
+
+		invoke();
+
+		expect(next).toHaveBeenCalledOnce();
+	});
+
+	it("throws AppError with 400 / INVALID_ID for a malformed id", () => {
+		const { next, invoke } = runId("not-an-object-id");
+
+		expect(invoke).toThrow(AppError);
+		try {
+			invoke();
+		} catch (err) {
+			expect(err.statusCode).toBe(400);
+			expect(err.code).toBe("INVALID_ID");
+		}
+		expect(next).not.toHaveBeenCalled();
 	});
 });

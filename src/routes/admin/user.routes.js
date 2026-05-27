@@ -17,7 +17,7 @@ import {
 	hardDeleteUserHandler,
 	restoreUserHandler,
 } from "../../controllers/admin/user.controller.js";
-import validateId from "../../middlewares/validateId.middleware.js";
+import { validateId } from "../../middlewares/validate.middleware.js";
 import { requireSuperadmin } from "../../middlewares/authorize.middleware.js";
 
 const adminUserRouter = Router();
