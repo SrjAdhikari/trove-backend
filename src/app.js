@@ -13,16 +13,19 @@ import globalErrorHandler from "./middlewares/error.middleware.js";
 
 import routes from "./routes/index.js";
 
-const { APP_ORIGIN, NODE_ENV, COOKIE_SECRET } = envConfig;
+const { APP_ORIGIN, COOKIE_SECRET } = envConfig;
 const { OK, NOT_FOUND } = httpStatus;
 const { ROUTE_NOT_FOUND } = appErrorCode;
 
 const app = express();
 const allowedOrigins = [APP_ORIGIN];
 
-//* ==============================
-//* EXPRESS CORE MIDDLEWARE
-//* ==============================
+/**
+ * Express Config Middlewares
+ * - CORS
+ * - JSON Body Parser
+ * - Cookie Parser
+ */
 app.use(
 	cors({
 		origin: allowedOrigins,
@@ -34,24 +37,11 @@ app.use(
 app.use(express.json({ limit: "1mb" }));
 app.use(cookieParser(COOKIE_SECRET));
 
-//* ==============================
-//* REQUEST LOGGER
-//* ==============================
-app.use((req, res, next) => {
-	if (NODE_ENV === "development") {
-		console.log(
-			`Request Method: ${req.method}`,
-			`URL: ${req.url}`,
-			`Headers: ${JSON.stringify(req.headers)}`,
-			`Body: ${JSON.stringify(req.body)}`,
-		);
-	}
-	next();
-});
-
-//* ==============================
-//* HEALTH CHECK & HOME ROUTE
-//* ==============================
+/**
+ * Health Check Endpoint & Home Route
+ * - GET /health
+ * - GET /
+ */
 app.get("/health", (req, res) => {
 	res.status(OK).json({
 		success: true,
@@ -66,14 +56,16 @@ app.get("/", (req, res) => {
 	});
 });
 
-//* ==============================
-//* API ROUTES
-//* ==============================
+/**
+ * API Routes
+ * - All routes will be prefixed with /api
+ */
 app.use("/api", routes);
 
-//* ==============================
-//* 404 + GLOBAL ERROR HANDLER
-//* ==============================
+/**
+ * 404 + Global Error Handler
+ * - This will catch all undefined routes and pass an AppError to the global error handler
+ */
 app.use("/{*splat}", (req, res, next) => {
 	next(
 		new AppError(
