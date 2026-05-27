@@ -32,7 +32,13 @@ const { PROVIDER_MISMATCH, UNAUTHORIZED_ACCESS, ACCOUNT_SUSPENDED } =
  * @throws {AppError} `PROVIDER_MISMATCH` — the email already belongs to an account registered with a different provider.
  */
 const loginOrCreateOAuthUser = async (provider, profile, deviceInfo) => {
-	const { name, email, picture } = profile;
+	const { name: providerName, email, picture } = profile;
+
+	// Provider names can be very long, so we truncate to fit within the User.name limit.
+	const name =
+		typeof providerName === "string"
+			? providerName.slice(0, 100)
+			: providerName;
 
 	const existingUser = await User.findOne({ email }).lean();
 
@@ -57,11 +63,7 @@ const loginOrCreateOAuthUser = async (provider, profile, deviceInfo) => {
 		}
 
 		if (existingUser.suspendedAt) {
-			throw new AppError(
-				"Account is suspended",
-				FORBIDDEN,
-				ACCOUNT_SUSPENDED,
-			);
+			throw new AppError("Account is suspended", FORBIDDEN, ACCOUNT_SUSPENDED);
 		}
 
 		// Refresh denormalized profile fields only when they've changed.
