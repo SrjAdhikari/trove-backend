@@ -13,7 +13,7 @@ import {
 	deleteDirectoryHandler,
 } from "../controllers/directory.controller.js";
 import authenticate from "../middlewares/auth.middleware.js";
-import validateId from "../middlewares/validateId.middleware.js";
+import { validateId } from "../middlewares/validate.middleware.js";
 
 const directoryRouter = Router();
 
