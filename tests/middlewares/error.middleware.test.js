@@ -62,6 +62,22 @@ describe("globalErrorHandler", () => {
 		expect(res.body.error.message).toBe("email already exists");
 	});
 
+	it("handles E11000 with keyPattern but no keyValue without throwing", () => {
+		const res = run({ code: 11000, keyPattern: { email: 1 } });
+
+		expect(res.statusCode).toBe(409);
+		expect(res.body.error.code).toBe(appErrorCode.DUPLICATE_FIELD);
+		expect(res.body.error.message).toBe("email already exists");
+	});
+
+	it("handles E11000 with neither keyValue nor keyPattern without throwing", () => {
+		const res = run({ code: 11000 });
+
+		expect(res.statusCode).toBe(409);
+		expect(res.body.error.code).toBe(appErrorCode.DUPLICATE_FIELD);
+		expect(res.body.error.message).toBe("Duplicate field value");
+	});
+
 	it("maps MongoDB document-validation failure (code 121) to 400 / VALIDATION_ERROR", () => {
 		const res = run({ code: 121, message: "doc failed validation" });
 

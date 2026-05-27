@@ -36,10 +36,13 @@ const knownAppError = (err) => {
 		return new AppError(message, UNPROCESSABLE_ENTITY, VALIDATION_ERROR);
 	}
 
-	// 3. MongoDB duplicate-key error
+	// 3. MongoDB duplicate-key error. keyValue isn't guaranteed on every 11000
+	// (driver/version variance), so fall back to keyPattern, then a generic message.
 	if (err.code === 11000) {
-		const field = Object.keys(err.keyValue)[0];
-		return new AppError(`${field} already exists`, CONFLICT, DUPLICATE_FIELD);
+		const field =
+			Object.keys(err.keyValue ?? {})[0] ?? Object.keys(err.keyPattern ?? {})[0];
+		const message = field ? `${field} already exists` : "Duplicate field value";
+		return new AppError(message, CONFLICT, DUPLICATE_FIELD);
 	}
 
 	// 4. MongoDB document-validation failure
