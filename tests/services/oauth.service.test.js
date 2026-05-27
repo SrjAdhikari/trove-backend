@@ -2,6 +2,8 @@ import { describe, it, expect } from "vitest";
 
 import { loginOrCreateOAuthUser } from "../../src/services/oauth.service.js";
 
+import User from "../../src/models/user.model.js";
+
 import { createTestUser } from "../factories.js";
 
 const DEVICE = { userAgent: "vitest", ipAddress: "127.0.0.1" };
@@ -60,5 +62,38 @@ describe("oauth.service.loginOrCreateOAuthUser — issue #29 lifecycle gate", ()
 
 		expect(result.isNewUser).toBe(true);
 		expect(result.session).toBeDefined();
+	});
+});
+
+describe("oauth.service.loginOrCreateOAuthUser — issue #38 name truncation", () => {
+	it("truncates an over-long display name to 100 chars when creating a user", async () => {
+		const email = "long-name-new@example.com";
+
+		const result = await loginOrCreateOAuthUser(
+			"google",
+			{ name: "x".repeat(150), email, picture: null },
+			DEVICE,
+		);
+
+		expect(result.isNewUser).toBe(true);
+
+		const user = await User.findOne({ email }).lean();
+		expect(user.name).toHaveLength(100);
+	});
+
+	it("truncates an over-long display name to 100 chars when refreshing an existing user's profile", async () => {
+		const email = "long-name-refresh@example.com";
+		await createTestUser({ email, provider: "google", name: "Short" });
+
+		const result = await loginOrCreateOAuthUser(
+			"google",
+			{ name: "y".repeat(150), email, picture: null },
+			DEVICE,
+		);
+
+		expect(result.isNewUser).toBe(false);
+
+		const user = await User.findOne({ email }).lean();
+		expect(user.name).toHaveLength(100);
 	});
 });
