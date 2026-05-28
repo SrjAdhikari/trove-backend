@@ -13,7 +13,11 @@ import {
 	deleteDirectoryHandler,
 } from "../controllers/directory.controller.js";
 import authenticate from "../middlewares/auth.middleware.js";
-import { validateId } from "../middlewares/validate.middleware.js";
+import { validateBody, validateId } from "../middlewares/validate.middleware.js";
+import {
+	createDirectorySchema,
+	renameDirectorySchema,
+} from "../validators/directory.validator.js";
 
 const directoryRouter = Router();
 
@@ -35,13 +39,21 @@ directoryRouter.get("{/:id}", getDirectoryHandler);
  * Create a new directory
  * @route POST /api/directories/{:parentDirId}
  */
-directoryRouter.post("{/:parentDirId}", createDirectoryHandler);
+directoryRouter.post(
+	"{/:parentDirId}",
+	validateBody(createDirectorySchema),
+	createDirectoryHandler,
+);
 
 /**
  * Update (Rename) a directory
  * @route PATCH /api/directories/{:id}
  */
-directoryRouter.patch("/:id", updateDirectoryHandler);
+directoryRouter.patch(
+	"/:id",
+	validateBody(renameDirectorySchema),
+	updateDirectoryHandler,
+);
 
 /**
  * Delete a directory and all its children
