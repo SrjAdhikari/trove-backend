@@ -25,7 +25,10 @@ const importDriveSchema = z.object({
 			MAX_ITEMS_PER_REQUEST,
 			`items must contain at most ${MAX_ITEMS_PER_REQUEST} entries`,
 		),
-	parentDirId: z.string("parentDirId must be a string when provided").optional(),
+	parentDirId: z
+		.string("parentDirId must be a string when provided")
+		.trim()
+		.optional(),
 });
 
 export { importDriveSchema };

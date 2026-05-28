@@ -95,6 +95,20 @@ describe("importDriveSchema", () => {
 		).toBe(true);
 	});
 
+	it("trims surrounding whitespace from parentDirId", () => {
+		const result = importDriveSchema.safeParse({
+			...valid,
+			parentDirId: "  65abc  ",
+		});
+		expect(result.data.parentDirId).toBe("65abc");
+	});
+
+	it("collapses a whitespace-only parentDirId to empty (root fallback downstream)", () => {
+		const result = importDriveSchema.safeParse({ ...valid, parentDirId: "   " });
+		expect(result.success).toBe(true);
+		expect(result.data.parentDirId).toBe("");
+	});
+
 	it("rejects a non-string parentDirId", () => {
 		expect(
 			importDriveSchema.safeParse({ ...valid, parentDirId: 123 }).success,
