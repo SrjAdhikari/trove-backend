@@ -7,7 +7,7 @@ This document outlines the architecture, data flow, and security mechanisms behi
 The Directory creation logic adheres to the Controller-Service pattern, with authentication and validation enforced at the router level before any handler executes.
 
 - **Authentication (`auth.middleware.js`)**: Applied router-wide via `directoryRouter.use(authenticate)`. Every directory endpoint requires a valid session — unauthenticated requests are rejected before reaching any controller.
-- **Middleware (`validateId.middleware.js`)**: Registered via `router.param()` on `parentDirId`. Validates MongoDB ObjectId format using `isValidObjectId`, throwing a `BAD_REQUEST` error before the request reaches the controller.
+- **Middleware (`validate.middleware.js`)**: `validateId` is registered via `router.param()` on `parentDirId` (ObjectId format check), and `validateBody(createDirectorySchema)` sanitizes the body — both run before the request reaches the controller.
 - **Controller (`directory.controller.js`)**: Extracts route parameters and request body, delegates to the Service layer. Contains zero business logic or database access.
 - **Service (`directory.service.js`)**: Validates parent directory ownership and creates the new directory document.
 
@@ -24,7 +24,7 @@ The Directory creation logic adheres to the Controller-Service pattern, with aut
 - **Flow:**
   1. `authenticate` middleware validates the user's session and populates `req.user`.
   2. If `:parentDirId` is present, `validateId` middleware confirms it is a valid ObjectId format.
-  3. Controller reads `req.body?.name`, defaulting to `"New Folder"` if absent or body is undefined.
+  3. `validateBody(createDirectorySchema)` sanitizes the body at the route — `name` is optional; it's trimmed, stripped of control characters and path dividers, and capped at 255 chars, defaulting to `"New Folder"` when absent, blank, or non-string. The controller reads the already-clean `req.body.name`.
   4. **Edge Case Handled:** If `parentDirId` is omitted, the controller falls back to `req.user.rootDirId` — the user's permanent root directory created during registration.
   5. Calls `createDirectory(parentDirId, dirname, userId)` in the Service layer.
   6. Returns the newly created directory document with `201 Created`.
@@ -61,7 +61,7 @@ Before creating a child directory, the service verifies that the parent director
 
 ### Schema-Level Validation
 
-The Directory model enforces `minlength: 3` and `maxlength: 50` on the `name` field, with `trim: true` to strip leading/trailing whitespace. The `strict: "throw"` option rejects any fields not defined in the schema.
+The Directory model enforces `minlength: 3` and `maxlength: 50` on the `name` field, with `trim: true` to strip leading/trailing whitespace. The `strict: "throw"` option rejects any fields not defined in the schema. The Zod `createDirectorySchema` sanitizes and caps the name at 255 chars upstream, but the Mongoose `3..50` bounds remain the authoritative backstop — a name of 51–255 chars passes Zod yet is rejected by Mongoose as `422 VALIDATION_ERROR`.
 
 ### Duplicate Directory Handling (Pending)
 

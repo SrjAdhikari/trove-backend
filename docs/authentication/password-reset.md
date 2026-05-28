@@ -21,7 +21,7 @@ Both endpoints are **public** (no `authenticate` middleware) — the user is by 
 - **Route:** `POST /api/auth/forgot-password`
 - **Payload:** `{ email }`
 - **Flow:**
-  1. `validateRequestBody(forgotPasswordSchema)` validates `email` at the route (`400 VALIDATION_ERROR` if missing or malformed).
+  1. `validateBody(forgotPasswordSchema)` validates `email` at the route (`400 VALIDATION_ERROR` if missing or malformed).
   2. Calls `forgotPassword(email)` in Auth Service.
   3. Service queries `User.findOne({ email, isVerified: true })` — unverified accounts are filtered out (the registration flow handles them) and surface as `USER_NOT_FOUND`.
   4. **Provider Guard:** Rejects OAuth-provisioned users with `400 PROVIDER_MISMATCH`. A Google/GitHub user has no stored password, so a reset code would be useless and confusing — the message steers them to their actual sign-in method.
@@ -35,7 +35,7 @@ Both endpoints are **public** (no `authenticate` middleware) — the user is by 
 - **Route:** `POST /api/auth/reset-password`
 - **Payload:** `{ email, otp, newPassword }`
 - **Flow:**
-  1. `validateRequestBody(resetPasswordSchema)` validates `email`, `otp`, and `newPassword` at the route (`400 VALIDATION_ERROR` if any are missing or malformed).
+  1. `validateBody(resetPasswordSchema)` validates `email`, `otp`, and `newPassword` at the route (`400 VALIDATION_ERROR` if any are missing or malformed).
   2. Calls `resetPassword(email, otp, newPassword)` in Auth Service.
   3. Service fetches the user with `.select("+otp +otpExpiresAt")` to bypass the schema's `select: false` security on those fields.
   4. **User filter:** Same `{ email, isVerified: true }` query as `forgotPassword` — keeps both endpoints consistent on which accounts are eligible.
