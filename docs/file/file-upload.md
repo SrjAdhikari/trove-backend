@@ -7,7 +7,7 @@ This document outlines the architecture, data flow, and security mechanisms behi
 The File upload logic adheres to the Controller-Service pattern, with authentication and validation enforced at the router level before any handler executes.
 
 - **Authentication (`auth.middleware.js`)**: Applied router-wide via `fileRouter.use(authenticate)`. Every file endpoint requires a valid session — unauthenticated requests are rejected before reaching any controller.
-- **Middleware (`validateId.middleware.js`)**: Registered via `router.param()` on `parentDirId`. Validates MongoDB ObjectId format using `isValidObjectId`, throwing a `BAD_REQUEST` error before the request reaches the controller.
+- **Middleware (`validate.middleware.js`)**: `validateId` is registered via `router.param()` on `parentDirId`. Validates MongoDB ObjectId format using `isValidObjectId`, throwing a `BAD_REQUEST` error before the request reaches the controller.
 - **Controller (`file.controller.js`)**: Extracts route parameters and request headers, delegates to the Service layer. Passes the request object as a readable stream to the service. Contains zero business logic or database access.
 - **Service (`file.service.js`)**: Validates parent directory ownership, creates the file record, and streams the file data to disk.
 

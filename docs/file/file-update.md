@@ -7,8 +7,8 @@ This document outlines the architecture, data flow, and security mechanisms behi
 The File update logic adheres to the Controller-Service pattern, with authentication and validation enforced at the router level before any handler executes.
 
 - **Authentication (`auth.middleware.js`)**: Applied router-wide via `fileRouter.use(authenticate)`. Every file endpoint requires a valid session — unauthenticated requests are rejected before reaching any controller.
-- **Middleware (`validateId.middleware.js`)**: Registered via `router.param()` on `id`. Validates MongoDB ObjectId format using `isValidObjectId`, throwing a `BAD_REQUEST` error before the request reaches the controller.
-- **Controller (`file.controller.js`)**: Extracts route parameters and request body, performs input validation, delegates to the Service layer. Contains zero business logic or database access.
+- **Middleware (`validate.middleware.js`)**: `validateId` is registered via `router.param()` on `id` (ObjectId format check), and `validateBody(renameFileSchema)` validates + sanitizes the body — both run before the request reaches the controller.
+- **Controller (`file.controller.js`)**: Extracts route parameters and the already-validated request body, delegates to the Service layer. Contains zero business logic or database access.
 - **Service (`file.service.js`)**: Performs an atomic ownership-scoped rename.
 
 ---
@@ -24,8 +24,8 @@ The File update logic adheres to the Controller-Service pattern, with authentica
 - **Flow:**
   1. `authenticate` middleware validates the user's session and populates `req.user`.
   2. `validateId` middleware confirms `:id` is a valid ObjectId format.
-  3. Controller reads `req.body?.newFileName` with safe optional chaining.
-  4. **Input Validation:** If `newFileName` is missing or not a string, the controller throws `AppError` with `BAD_REQUEST` and `INVALID_INPUT`.
+  3. `validateBody(renameFileSchema)` validates and sanitizes the body at the route — `newFileName` is required, reduced to its base name via `path.basename` (anti-traversal), stripped of control characters and backslashes, trimmed, and capped at 255 chars. A missing / non-string / empty-after-sanitize value is rejected with `400 VALIDATION_ERROR`.
+  4. Controller reads the already-clean `req.body.newFileName` and delegates.
   5. Calls `updateFile(fileId, newFileName, userId)` in the Service layer.
   6. Returns the updated file document.
 
@@ -78,8 +78,8 @@ The `findOneAndUpdate` query includes `userId` in the filter. This ensures a use
 
 `runValidators: true` re-applies Mongoose schema validators on the updated fields. Without this flag, `findOneAndUpdate` bypasses schema validation by default, which could allow invalid names (too short) to be saved.
 
-### Input Validation at Controller Level
+### Input Validation at the Router (Zod)
 
-The controller explicitly checks that `newFileName` exists and is a string before delegating to the service. This prevents empty renames and type-coercion bugs. This validation will move to Zod middleware once input validation is set up.
+`validateBody(renameFileSchema)` validates and sanitizes the body before the controller runs (PR #44): `newFileName` must be a string, is reduced to its base name (`path.basename`, defusing traversal), stripped of control characters and backslashes, trimmed, and capped at 255 chars; an empty-after-sanitize value is rejected with `400 VALIDATION_ERROR`. Because the field is `z.string()`, operator-injection shapes like `{ $ne: "" }` are rejected before the service runs.
 
 ---

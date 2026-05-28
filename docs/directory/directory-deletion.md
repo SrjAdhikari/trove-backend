@@ -7,7 +7,7 @@ This document outlines the architecture, data flow, and security mechanisms behi
 The Directory deletion logic adheres to the Controller-Service pattern, with authentication and validation enforced at the router level before any handler executes.
 
 - **Authentication (`auth.middleware.js`)**: Applied router-wide via `directoryRouter.use(authenticate)`. Every directory endpoint requires a valid session — unauthenticated requests are rejected before reaching any controller.
-- **Middleware (`validateId.middleware.js`)**: Registered via `router.param()` on `id`. Validates MongoDB ObjectId format using `isValidObjectId`, throwing a `BAD_REQUEST` error before the request reaches the controller.
+- **Middleware (`validate.middleware.js`)**: `validateId` is registered via `router.param()` on `id`. Validates MongoDB ObjectId format using `isValidObjectId`, throwing a `BAD_REQUEST` error before the request reaches the controller.
 - **Controller (`directory.controller.js`)**: Extracts route parameters, delegates to the Service layer. Contains zero business logic or database access.
 - **Service (`directory.service.js`)**: Orchestrates the full deletion pipeline — recursive directory collection, path validation, atomic DB deletes, and physical file cleanup.
 

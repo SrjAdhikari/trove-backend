@@ -7,8 +7,8 @@ This document outlines the architecture, data flow, and security mechanisms behi
 The Directory update logic adheres to the Controller-Service pattern, with authentication and validation enforced at the router level before any handler executes.
 
 - **Authentication (`auth.middleware.js`)**: Applied router-wide via `directoryRouter.use(authenticate)`. Every directory endpoint requires a valid session — unauthenticated requests are rejected before reaching any controller.
-- **Middleware (`validateId.middleware.js`)**: Registered via `router.param()` on `id`. Validates MongoDB ObjectId format using `isValidObjectId`, throwing a `BAD_REQUEST` error before the request reaches the controller.
-- **Controller (`directory.controller.js`)**: Extracts route parameters and request body, performs input validation, delegates to the Service layer. Contains zero business logic or database access.
+- **Middleware (`validate.middleware.js`)**: `validateId` is registered via `router.param()` on `id` (ObjectId format check), and `validateBody(renameDirectorySchema)` validates + sanitizes the body — both run before the request reaches the controller.
+- **Controller (`directory.controller.js`)**: Extracts route parameters and the already-validated request body, delegates to the Service layer. Contains zero business logic or database access.
 - **Service (`directory.service.js`)**: Verifies ownership, guards against root directory rename, and performs the update.
 
 ---
@@ -24,8 +24,8 @@ The Directory update logic adheres to the Controller-Service pattern, with authe
 - **Flow:**
   1. `authenticate` middleware validates the user's session and populates `req.user`.
   2. `validateId` middleware confirms `:id` is a valid ObjectId format.
-  3. Controller reads `req.body?.newDirName` with safe optional chaining.
-  4. **Input Validation:** If `newDirName` is missing or not a string, the controller throws `AppError` with `BAD_REQUEST` and `INVALID_INPUT`.
+  3. `validateBody(renameDirectorySchema)` validates and sanitizes the body at the route — `newDirName` is required, trimmed, stripped of control characters and path dividers (`\r \n \t \ /`), and capped at 255 chars. A missing / non-string / empty-after-sanitize value is rejected with `400 VALIDATION_ERROR`.
+  4. Controller reads the already-clean `req.body.newDirName` and delegates.
   5. Calls `updateDirectory(directoryId, newDirName, userId)` in the Service layer.
   6. Returns the updated directory document.
 
@@ -78,8 +78,8 @@ Both the `findOne` and `findOneAndUpdate` queries include `userId` in the filter
 
 `runValidators: true` re-applies Mongoose schema validators on the updated fields. Without this flag, `findOneAndUpdate` bypasses schema validation by default, which could allow invalid names (too short, too long) to be saved.
 
-### Input Validation at Controller Level
+### Input Validation at the Router (Zod)
 
-The controller explicitly checks that `newDirName` exists and is a string before delegating to the service. This prevents empty renames and type-coercion bugs. This validation will move to Zod middleware once input validation is set up.
+`validateBody(renameDirectorySchema)` validates and sanitizes the body before the controller runs (PR #44): `newDirName` must be a string, is trimmed, has control characters and path dividers stripped, and is capped at 255 chars; an empty-after-sanitize value is rejected with `400 VALIDATION_ERROR`. Because the field is `z.string()`, operator-injection shapes like `{ $ne: "" }` are rejected before the service runs.
 
 ---

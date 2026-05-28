@@ -1,6 +1,6 @@
 # Error Codes
 
-> **Status:** As-of 2026-05-15. This document is a glossary that drifts as the codebase evolves — refresh it when adding or removing codes from `src/constants/appErrorCode.js`.
+> **Status:** As-of 2026-05-28. This document is a glossary that drifts as the codebase evolves — refresh it when adding or removing codes from `src/constants/appErrorCode.js`.
 
 The TroveCloud backend returns structured errors with stable, machine-readable codes. The frontend consumes these codes to drive UI behavior (which form to redirect to, which message to show, when to retry). This document is the contract: the source of truth for what each code means and where it's thrown.
 
@@ -98,7 +98,7 @@ Returned by the admin subsystem (`/api/admin/*`). The route gate (`requireRole` 
 | `INVALID_GITHUB_CODE` | 400          | GitHub authorization-code exchange failed. (A missing or non-string `code` is now rejected upstream as `VALIDATION_ERROR`.) | `verifyGithubCodeAndFetchProfile`                |
 | `INVALID_ID`          | 400          | Path parameter wasn't a valid Mongo ObjectId.                                    | `validateId` middleware, also auto-converted from Mongoose `CastError` |
 | `INVALID_ID_TOKEN`    | 400          | Google ID-token verification failed. (A missing or non-string `idToken` is now rejected upstream as `VALIDATION_ERROR`.)        | `verifyGoogleIdToken`                            |
-| `VALIDATION_ERROR`    | 400 / 422    | Request body failed Zod validation at the route (`400`), or Mongoose schema validation failed on `.save()`/`.create()` (`422`, auto-converted).               | `validateRequestBody` middleware (`400`); auto-converted from Mongoose `ValidationError` (`422`) |
+| `VALIDATION_ERROR`    | 400 / 422    | Request body failed Zod validation at the route (`400`), or Mongoose schema validation failed on `.save()`/`.create()` (`422`, auto-converted).               | `validateBody` middleware (`400`) — wired on the auth routes and the directory / file-rename / drive-import routes; auto-converted from Mongoose `ValidationError` (`422`) |
 
 ### OTP
 
@@ -114,7 +114,7 @@ Returned by the admin subsystem (`/api/admin/*`). The route gate (`requireRole` 
 | Code                  | Typical HTTP | Meaning                                                                                                       | Where thrown                                                       |
 | --------------------- | ------------ | ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
 | `INTERNAL_ERROR`      | 500          | Catch-all for unexpected errors. Sets `isOperational: false` so the original message is hidden in production. | `globalErrorHandler` fallback when no other handler matches        |
-| `INVALID_INPUT`       | 400          | Body validation failed for a non-required-field reason (wrong type, out of range, malformed encoding), or an admin action was rejected because the target's lifecycle state precludes it (e.g., suspending an already-suspended user, restoring a user who is not soft-deleted, unknown role/status filter). | Various handlers (`directory.controller.js`, `file.controller.js`); state-guard branches across the admin mutation handlers in `src/services/admin/user.service.js` |
+| `INVALID_INPUT`       | 400          | A file-upload filename header couldn't be URL-decoded, or an admin action was rejected because the target's lifecycle state precludes it (e.g., suspending an already-suspended user, restoring a user who is not soft-deleted, unknown role/status filter). _(Directory / file-rename / drive-import body validation now returns `VALIDATION_ERROR` — moved to Zod in PR #44.)_ | `uploadFileHandler` in `file.controller.js` (filename-header decode); state-guard branches across the admin mutation handlers in `src/services/admin/user.service.js` |
 | `ROUTE_NOT_FOUND`     | 404          | Requested URL didn't match any registered route.                                                              | 404 handler in `app.js`                                            |
 
 ### Drive Import
@@ -127,7 +127,7 @@ Returned by `POST /api/drive/import`. Most appear inside the `failed[]` array of
 | `DRIVE_IMPORT_FAILED`         | failed[]     | Generic Drive failure — quota, network, JSON parse, or any other unmapped error.                     | `googleDrive.js` and `drive.service.js` per-item catch                                      |
 | `DRIVE_IMPORT_LIMIT_EXCEEDED` | failed[]     | Per-file size cap (100 MB) or aggregate cap (500 MB) tripped during streaming.                       | `streamFileIntoTrove` in `drive.service.js` (pre-flight + post-hoc byte counter)            |
 | `DRIVE_ITEM_NOT_FOUND`        | failed[]     | Drive returned 404, or the item was trashed when re-fetched.                                         | `googleDrive.js` (404 mapping); `importItem` in `drive.service.js` (trashed check)          |
-| `INVALID_DRIVE_TOKEN`         | 400 / failed[] | Missing/invalid `accessToken` body field, or Drive returned 401.                                   | `importDriveHandler` (input validation, top-level 400); `googleDrive.js` (401 mapping)      |
+| `INVALID_DRIVE_TOKEN`         | failed[]     | Drive returned `401` for the access token (expired / invalid) while fetching an item. A missing or malformed `accessToken` body field is now rejected upstream as `VALIDATION_ERROR` (PR #44), so this code only appears per-item in `failed[]`. | `googleDrive.js` (401 mapping), surfaced per-item by `drive.service.js` |
 | `UNSUPPORTED_DRIVE_TYPE`      | failed[]     | Picked item is a Shortcut, or a Google-native type without an export mapping (Forms, Drawings, etc.). | `importItem` in `drive.service.js`                                                          |
 
 ---

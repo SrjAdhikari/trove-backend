@@ -1,6 +1,6 @@
 # Google Drive Import
 
-> **Status:** As-built (2026-04-25, shipped in PR #21). The `POST /api/drive/import` endpoint is live. The design below matches the current implementation; refresh when behavior changes.
+> **Status:** As-built (2026-04-25, shipped in PR #21). The `POST /api/drive/import` endpoint is live. Request-body validation was moved from inline controller checks to a Zod schema (`importDriveSchema`, `validateBody`) in PR #44 (2026-05-28) — malformed input now returns `400 VALIDATION_ERROR` instead of `INVALID_INPUT` / `INVALID_DRIVE_TOKEN`. The design below matches the current implementation; refresh when behavior changes.
 
 Lets a signed-in user pick files and folders from their Google Drive and copy them into TroveCloud, preserving the folder hierarchy. One-shot, selective import — not a persistent Drive sync.
 
@@ -55,7 +55,7 @@ Returns HTTP `200` for any non-fatal outcome — partial success is a valid resu
 }
 ```
 
-Malformed input (missing / wrong-type body fields) still returns `400 INVALID_INPUT` via the global error handler.
+Malformed input (missing / wrong-type body fields) returns `400 VALIDATION_ERROR` from the `validateBody(importDriveSchema)` middleware, before the handler runs.
 
 ---
 
@@ -126,24 +126,27 @@ Internal helpers:
 
 **Streaming to disk:** Drive's response body arrives as a Web ReadableStream. It is wrapped in a `Transform` that counts bytes and aborts the pipeline when the post-hoc total exceeds the per-file cap — necessary because Google-native `export` responses have no pre-flight `size`. The counter-wrapped Readable is then passed to the existing `uploadFile(parentDirId, userId, displayName, readable)` in `src/services/file.service.js`, which already handles the DB row creation, disk write, and rollback on pipeline failure.
 
+**`src/validators/drive.validator.js`** — request-body validation (PR #44).
+
+Exports `importDriveSchema`, consumed via `validateBody(importDriveSchema)` at the route. It enforces, before the handler runs:
+
+- `accessToken` — string, trimmed, non-empty, `≤ 4096` chars.
+- `items` — array of `1..50` objects, each `{ id, mimeType }` non-empty trimmed strings (extra keys are stripped; the service only consumes `item.id`).
+- `parentDirId` — optional trimmed string (whitespace collapses to empty → resolved to the user's root downstream).
+
+Any failure throws `400 VALIDATION_ERROR`. Because the fields are `z.string()`, operator-injection shapes like `{$ne:""}` are rejected here, before any service call.
+
 **`src/controllers/drive.controller.js`** — thin HTTP handler.
 
-Exports `importDriveHandler(req, res)`. Validation is inline (matching the existing controller pattern; Zod-based request validation is tracked separately):
+Exports `importDriveHandler(req, res)`. The body is already validated/normalized by the route middleware, so the handler just reads `const { accessToken, items, parentDirId } = req.body;`, resolves `parentDirId` to `user.rootDirId` when blank, and delegates to `importFromDrive`.
 
-- `const { accessToken, items, parentDirId } = req.body ?? {};`
-- `typeof accessToken !== "string" || !accessToken` → `INVALID_DRIVE_TOKEN`
-- `accessToken.length > 4096` → `INVALID_DRIVE_TOKEN` (defensive sanity cap)
-- `!Array.isArray(items) || items.length === 0 || items.length > 50` → `INVALID_INPUT`
-- Each item: `typeof item.id === "string" && typeof item.mimeType === "string"` — otherwise `INVALID_INPUT`
-- `parentDirId` optional; if present, must be a string. Real ObjectId validation happens inside `createDirectory`.
-
-Response: always `200` unless input itself is malformed. Body per the contract above.
+Response: always `200` unless input itself is malformed (then `400 VALIDATION_ERROR` from the validator). Body per the contract above.
 
 **`src/routes/drive.routes.js`** — route registration.
 
 ```js
 driveRouter.use(authenticate);
-driveRouter.post("/import", importDriveHandler);
+driveRouter.post("/import", validateBody(importDriveSchema), importDriveHandler);
 ```
 
 ### Modified files
@@ -165,11 +168,11 @@ Conservative defaults. Tune later if real usage warrants.
 
 | Guard                       | Value        | Enforced in                                                                                                              |
 | --------------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------ |
-| Max items per request       | 50           | `importDriveHandler` input validation                                                                                    |
+| Max items per request       | 50           | `importDriveSchema` (`validateBody`) — `400 VALIDATION_ERROR` on violation                                               |
 | Per-file size cap           | 100 MB       | `importItem` pre-flight (via `size` from metadata) AND post-hoc byte counter (for native exports where `size` is absent) |
 | Aggregate bytes per request | 500 MB       | Running total in `ctx.totalBytes`; short-circuits remaining items with `DRIVE_IMPORT_LIMIT_EXCEEDED`                     |
 | Folder recursion depth      | 20           | Parameter passed through `importItem`; matches `$graphLookup` `maxDepth` elsewhere in the codebase                       |
-| `accessToken` string length | ≤ 4096       | Input validation (defensive)                                                                                             |
+| `accessToken` string length | ≤ 4096       | `importDriveSchema` (`validateBody`, defensive)                                                                          |
 | Drive fetch timeout         | 15s per call | `AbortSignal.timeout` in `googleDrive.js`                                                                                |
 | Picker items deduplicated   | by `driveId` | Orchestrator `seen` set (survives folder traversal)                                                                      |
 
@@ -245,7 +248,7 @@ These are deliberately out of scope for the initial implementation. Each represe
 - Oversize Google Doc (forces `exportSizeLimitExceeded` from Drive) — `DRIVE_EXPORT_TOO_LARGE`.
 - Expired / tampered access token — `401` from Drive → `INVALID_DRIVE_TOKEN`; no partial data in DB or on disk.
 - Dedup: pick folder `A` AND `A/file.pdf` explicitly — `file.pdf` appears once.
-- Items length 0 or > 50 — `400 INVALID_INPUT`.
+- Items length 0 or > 50 — `400 VALIDATION_ERROR`.
 - No session cookie — `401` from `authenticate`.
 - Aggregate limit: pick files summing > 500 MB — early items import, later items fail with `DRIVE_IMPORT_LIMIT_EXCEEDED`.
 
