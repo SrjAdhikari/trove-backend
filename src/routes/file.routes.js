@@ -14,7 +14,8 @@ import {
 } from "../controllers/file.controller.js";
 
 import authenticate from "../middlewares/auth.middleware.js";
-import { validateId } from "../middlewares/validate.middleware.js";
+import { validateBody, validateId } from "../middlewares/validate.middleware.js";
+import { renameFileSchema } from "../validators/file.validator.js";
 
 const fileRouter = Router();
 
@@ -42,7 +43,7 @@ fileRouter.post("{/:parentDirId}", uploadFileHandler);
  * Update (Rename) a file
  * @route PATCH /api/files/{:id}
  */
-fileRouter.patch("/:id", updateFileHandler);
+fileRouter.patch("/:id", validateBody(renameFileSchema), updateFileHandler);
 
 /**
  * Delete a file

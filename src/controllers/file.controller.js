@@ -64,30 +64,9 @@ const uploadFileHandler = async (req, res) => {
 const updateFileHandler = async (req, res) => {
 	const user = req.user;
 	const fileId = req.params.id;
-	let newFileName = req.body?.newFileName;
 
-	if (!newFileName || typeof newFileName !== "string" || !newFileName.trim()) {
-		throw new AppError(
-			"Valid file name is required",
-			BAD_REQUEST,
-			INVALID_INPUT,
-		);
-	}
-
-	// Security: Sanitize new filename to prevent path traversal, control character injection, or excess length
-	newFileName = path
-		.basename(newFileName)
-		.replace(/[\r\n\t\\]/g, "")
-		.trim();
-	if (newFileName.length > 255) newFileName = newFileName.substring(0, 255);
-
-	if (!newFileName) {
-		throw new AppError(
-			"Valid file name is required",
-			BAD_REQUEST,
-			INVALID_INPUT,
-		);
-	}
+	// Name is sanitized and validated by renameFileSchema (validateBody).
+	const newFileName = req.body.newFileName;
 
 	const updatedFile = await updateFile(fileId, newFileName, user._id);
 
