@@ -147,3 +147,7 @@ CLAUDE.md
 tasks/
 
 bash.exe.stackdump
+
+# Superpowers specific files
+.superpowers/
+docs/superpowers/
