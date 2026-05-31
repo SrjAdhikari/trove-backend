@@ -7,6 +7,7 @@
 
 import { Router } from "express";
 import authRouter from "./auth.routes.js";
+import userRouter from "./user.routes.js";
 import directoryRouter from "./directory.routes.js";
 import fileRouter from "./file.routes.js";
 import driveRouter from "./drive.routes.js";
@@ -19,6 +20,12 @@ const router = Router();
  * @route /api/auth
  */
 router.use("/auth", authRouter);
+
+/**
+ * User routes
+ * @route /api/users
+ */
+router.use("/users", userRouter);
 
 /**
  * Directory routes
