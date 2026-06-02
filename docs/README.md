@@ -12,6 +12,7 @@ Please navigate to the specific domain you need below:
 - [`email-template-system.md`](./architecture/email-template-system.md) - Transactional email composition model, brand tokens, client-compatibility rules.
 - [`drive-import.md`](./architecture/drive-import.md) - As-built design for the Google Drive import feature (`POST /api/drive/import`).
 - [`rbac-admin.md`](./architecture/rbac-admin.md) - RBAC + admin subsystem (`/api/admin/*`): roles, lifecycle fields, authorize middleware, mutation cascades.
+- [`profile-picture-upload.md`](./architecture/profile-picture-upload.md) - As-built design for profile-picture upload + public capability-URL serving (`POST` / `GET /api/users/profile-picture`).
 
 ### 📂 [Authentication](./authentication)
 
