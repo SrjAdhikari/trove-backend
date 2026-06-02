@@ -104,4 +104,17 @@ describe("globalErrorHandler", () => {
 		expect(res.body.error.message).toBe("Something went wrong");
 		expect(errorSpy).toHaveBeenCalled();
 	});
+
+	it("delegates to next(err) without writing a response when headers are already sent", () => {
+		const res = mockRes();
+		res.headersSent = true;
+		const next = vi.fn();
+		const err = new Error("stream failed mid-flight");
+
+		globalErrorHandler(err, {}, res, next);
+
+		expect(next).toHaveBeenCalledWith(err);
+		expect(res.status).not.toHaveBeenCalled();
+		expect(res.json).not.toHaveBeenCalled();
+	});
 });

@@ -66,14 +66,14 @@ const loginOrCreateOAuthUser = async (provider, profile, deviceInfo) => {
 			throw new AppError("Account is suspended", FORBIDDEN, ACCOUNT_SUSPENDED);
 		}
 
-		// Refresh denormalized profile fields only when they've changed.
+		/** Optional: update the user's name and profile picture on every sign-in, in case they changed it on the provider's side.
 		if (existingUser.name !== name || existingUser.profilePicture !== picture) {
 			await User.updateOne(
 				{ _id: existingUser._id },
 				{ name, profilePicture: picture },
 				{ runValidators: true },
 			);
-		}
+		} */
 
 		await enforceDeviceLimit(existingUser._id);
 

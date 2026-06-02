@@ -6,7 +6,11 @@
  */
 
 import { Router } from "express";
-import { updateProfileHandler } from "../controllers/user.controller.js";
+import {
+	updateProfileHandler,
+	uploadProfilePictureHandler,
+	getProfilePictureHandler,
+} from "../controllers/user.controller.js";
 
 import authenticate from "../middlewares/auth.middleware.js";
 import { validateBody } from "../middlewares/validate.middleware.js";
@@ -14,7 +18,14 @@ import { updateProfileSchema } from "../validators/user.validator.js";
 
 const userRouter = Router();
 
-// All user routes require authentication
+/**
+ * Get a profile picture by ID. PUBLIC — registered BEFORE
+ * `authenticate` so an <img> can load it cross-origin without a cookie.
+ * @route GET /api/users/profile-picture/:id
+ */
+userRouter.get("/profile-picture/:id", getProfilePictureHandler);
+
+// All routes below require authentication
 userRouter.use(authenticate);
 
 /**
@@ -26,5 +37,11 @@ userRouter.patch(
 	validateBody(updateProfileSchema),
 	updateProfileHandler,
 );
+
+/**
+ * Upload / replace the authenticated user's profile picture
+ * @route POST /api/users/profile-picture
+ */
+userRouter.post("/profile-picture", uploadProfilePictureHandler);
 
 export default userRouter;

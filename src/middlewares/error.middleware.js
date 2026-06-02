@@ -40,7 +40,8 @@ const knownAppError = (err) => {
 	// (driver/version variance), so fall back to keyPattern, then a generic message.
 	if (err.code === 11000) {
 		const field =
-			Object.keys(err.keyValue ?? {})[0] ?? Object.keys(err.keyPattern ?? {})[0];
+			Object.keys(err.keyValue ?? {})[0] ??
+			Object.keys(err.keyPattern ?? {})[0];
 		const message = field ? `${field} already exists` : "Duplicate field value";
 		return new AppError(message, CONFLICT, DUPLICATE_FIELD);
 	}
@@ -65,6 +66,11 @@ const knownAppError = (err) => {
  * @param {import('express').NextFunction} next - Express next function.
  */
 const globalErrorHandler = (err, req, res, next) => {
+	// Ignore errors that have already been handled by previous middleware (e.g., if headers have been sent).
+	if (res.headersSent) {
+		return next(err);
+	}
+
 	// 1. Resolve the incoming error into a structured AppError
 	let error = knownAppError(err);
 
