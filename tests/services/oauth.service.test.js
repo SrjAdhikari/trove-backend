@@ -81,19 +81,30 @@ describe("oauth.service.loginOrCreateOAuthUser — issue #38 name truncation", (
 		expect(user.name).toHaveLength(100);
 	});
 
-	it("truncates an over-long display name to 100 chars when refreshing an existing user's profile", async () => {
-		const email = "long-name-refresh@example.com";
-		await createTestUser({ email, provider: "google", name: "Short" });
+});
+
+describe("oauth.service.loginOrCreateOAuthUser — login does not clobber app-managed profile", () => {
+	it("leaves an existing user's name and profilePicture untouched on login", async () => {
+		const email = "stable-profile@example.com";
+		await createTestUser({
+			email,
+			provider: "google",
+			name: "App Edited Name",
+			profilePicture: "https://api.local/api/users/profile-picture/" + "a".repeat(32),
+		});
 
 		const result = await loginOrCreateOAuthUser(
 			"google",
-			{ name: "y".repeat(150), email, picture: null },
+			{ name: "Provider Name", email, picture: "https://provider/new.jpg" },
 			DEVICE,
 		);
 
 		expect(result.isNewUser).toBe(false);
 
 		const user = await User.findOne({ email }).lean();
-		expect(user.name).toHaveLength(100);
+		expect(user.name).toBe("App Edited Name");
+		expect(user.profilePicture).toBe(
+			"https://api.local/api/users/profile-picture/" + "a".repeat(32),
+		);
 	});
 });
