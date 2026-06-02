@@ -1,6 +1,6 @@
 # Profile Picture Upload
 
-> **Status:** Design (2026-05-31, rev 2). Approved, pending implementation. Lets users upload and replace their profile picture in the `/api/users` module, served via public capability URLs. No schema migration — reuses the existing `profilePicture` field. *(Informally "avatar"; all API identifiers use `profilePicture` / `profile-picture`.)*
+> **Status:** As-built (2026-06-02). Shipped in PR #51 (`7f6a86a` feat + `6f9591a` fix). Lets users upload and replace their profile picture in the `/api/users` module, served via public capability URLs. No schema migration — reuses the existing `profilePicture` field. *(Informally "avatar"; all API identifiers use `profilePicture` / `profile-picture`.)*
 
 ## Context
 
@@ -129,14 +129,16 @@ Thin and public:
 |---|---|---|
 | `src/utils/mimeType.js` | New | Magic-byte sniff (`detectImageType`) + a head-validating pass-through transform |
 | `src/utils/storagePath.js` | Modified | Add `PROFILE_PICTURES_ROOT`, `buildProfilePicturePath`, `buildProfilePictureUrl`, `parseProfilePictureToken` |
-| `src/services/user.service.js` | Modified | Add `setProfilePicture` (upload/replace + old-file cleanup) |
-| `src/controllers/user.controller.js` | Modified | Add `uploadProfilePictureHandler`, `serveProfilePictureHandler` |
+| `src/services/user.service.js` | Modified | Add `uploadProfilePicture` (upload/replace + old-file cleanup) and `getProfilePicture` (serve resolver) |
+| `src/controllers/user.controller.js` | Modified | Add `uploadProfilePictureHandler`, `getProfilePictureHandler` |
 | `src/routes/user.routes.js` | Modified | Public `GET /profile-picture/:id` (before `authenticate`) + authed `POST /profile-picture` |
 | `src/services/oauth.service.js` | Modified | Comment out the existing-user login re-sync block |
 | `src/constants/appErrorCode.js` | Modified | Add `INVALID_IMAGE_TYPE`, `IMAGE_TOO_LARGE`, `PROFILE_PICTURE_NOT_FOUND` |
 | `src/constants/env.js` | Modified | Add required `API_URL` |
 | `.env` (local) | Modified | Add `API_URL` — gitignored, not in the PR diff; required at boot |
+| `src/middlewares/error.middleware.js` | Modified | `globalErrorHandler` returns `next(err)` when `res.headersSent`, so a mid-stream `sendFile` failure delegates to Express's finalhandler instead of throwing `ERR_HTTP_HEADERS_SENT` (shipped as the `fix(error-middleware)` commit; also closes a pre-existing `getFileHandler` exposure) |
 | `tests/services/user.service.test.js` | Modified | TDD profile-picture service behaviors |
+| `tests/middlewares/error.middleware.test.js` | Modified | Test the `headersSent` delegation |
 | `tests/services/oauth.service.test.js` | Modified | Swap refresh-truncation test for the no-clobber test |
 | `tests/utils/mimeType.test.js` | New | TDD magic-byte validation |
 | `tests/utils/storagePath.test.js` | New | TDD path/URL/token helpers |
@@ -152,6 +154,17 @@ TDD at the service + util layer (Vitest + `mongodb-memory-server`), matching exi
 - `mimeType`: accepts valid JPEG/PNG/WEBP signatures; rejects SVG, GIF, and truncated/garbage input.
 - `user.service` `setProfilePicture`: writes a file and sets an absolute URL; trips the 2 MB cap and rolls back; replacing an existing picture deletes the old file; a remote/`null` previous `profilePicture` is left untouched on disk.
 - `oauth.service`: a returning OAuth user's `name` **and** `profilePicture` are **not** overwritten on login.
+
+---
+
+## As-built notes (deltas from design)
+
+A few details settled during implementation and review:
+
+- **Naming:** the service functions are `uploadProfilePicture` / `getProfilePicture`; the controller handlers are `uploadProfilePictureHandler` / `getProfilePictureHandler`.
+- **Serve existence check:** `getProfilePicture` opens the file with `fs.open()` and maps `ENOENT` → `PROFILE_PICTURE_NOT_FOUND` (404). Using `open` (rather than a separate `stat` + `open`) is one syscall and closes the check-then-use TOCTOU gap; any non-`ENOENT` `fs` error propagates to the global handler as a masked 500.
+- **Serve error forwarding:** the handler sets the cache / `nosniff` headers, then `res.sendFile(path, cb)`. On a *pre-stream* failure the callback strips `Cache-Control` (so a transient error isn't cached for a year) and calls `next(err)`. *Mid-stream* failures (headers already sent) are terminated centrally by `globalErrorHandler`, which now returns `next(err)` when `res.headersSent` — shipped as the `fix(error-middleware)` commit, also closing a pre-existing `getFileHandler` exposure.
+- **Verification:** dual-agent pre-commit review + `api-design` / `auth-and-security` / `error-handling` lens audits; 36 touched-file tests green (service + util + middleware layers; no supertest in the repo).
 
 ---
 

@@ -1,6 +1,6 @@
 # Error Codes
 
-> **Status:** As-of 2026-05-28. This document is a glossary that drifts as the codebase evolves — refresh it when adding or removing codes from `src/constants/appErrorCode.js`.
+> **Status:** As-of 2026-06-02. This document is a glossary that drifts as the codebase evolves — refresh it when adding or removing codes from `src/constants/appErrorCode.js`.
 
 The TroveCloud backend returns structured errors with stable, machine-readable codes. The frontend consumes these codes to drive UI behavior (which form to redirect to, which message to show, when to retry). This document is the contract: the source of truth for what each code means and where it's thrown.
 
@@ -70,7 +70,7 @@ Returned by the admin subsystem (`/api/admin/*`). The route gate (`requireRole` 
 | --------------------- | ------------ | ------------------------------------------------------------------- | ---------------------------------------------- |
 | `ACCESS_DENIED`       | 403          | Authenticated user attempted to access a resource they don't own.   | Service layer ownership checks                 |
 | `USER_ALREADY_EXISTS` | 409          | Registration attempted with an email that's already verified.       | `createUser`, `resendOTP` in `auth.service.js` |
-| `USER_NOT_FOUND`      | 404          | Lookup for a specific user (by email, in OTP / reset flows, or by id in admin actions) failed. | `verifyOTP`, `resendOTP`, `forgotPassword`, `resetPassword` in `auth.service.js`; `getUserById` and `findUserById` (shared by every mutation handler) in `src/services/admin/user.service.js` |
+| `USER_NOT_FOUND`      | 404          | Lookup for a specific user (by email, in OTP / reset flows, or by id in admin actions) failed. | `verifyOTP`, `resendOTP`, `forgotPassword`, `resetPassword` in `auth.service.js`; `getUserById` and `findUserById` (shared by every mutation handler) in `src/services/admin/user.service.js`; `updateProfile` and `uploadProfilePicture` in `src/services/user.service.js` (rare TOCTOU race — user deleted mid-request) |
 
 ### File
 
@@ -90,6 +90,16 @@ Returned by the admin subsystem (`/api/admin/*`). The route gate (`requireRole` 
 | `DIRECTORY_NOT_FOUND`     | 404          | The requested directory doesn't exist or doesn't belong to the user.                       | `getDirectory`, `updateDirectory`, `deleteDirectory` |
 | `DIRECTORY_RENAME_FAILED` | 400          | Attempted to rename the user's root directory.                                             | `updateDirectory` in `directory.service.js`          |
 
+### Profile Picture
+
+Returned by the `/api/users/profile-picture` endpoints (authenticated upload/replace + public serve). See [`docs/architecture/profile-picture-upload.md`](../architecture/profile-picture-upload.md) for the full flow.
+
+| Code                        | Typical HTTP | Meaning                                                                                                                                            | Where thrown                                |
+| --------------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
+| `IMAGE_TOO_LARGE`           | 400          | Upload exceeded the 2 MB profile-picture cap. Tripped mid-stream by the byte counter; the partial file is rolled back.                            | `uploadProfilePicture` in `user.service.js` |
+| `INVALID_IMAGE_TYPE`        | 400          | Uploaded bytes weren't a supported raster image. Magic-byte sniff allows JPEG / PNG / WEBP only; SVG and GIF are rejected. Partial file rolled back. | `uploadProfilePicture` in `user.service.js` |
+| `PROFILE_PICTURE_NOT_FOUND` | 404          | Serve request had a malformed token (not 32 hex chars) or no file exists for that token. The same code covers both so token validity isn't leaked. | `getProfilePicture` in `user.service.js`    |
+
 ### Validation
 
 | Code                  | Typical HTTP | Meaning                                                                          | Where thrown                                                           |
@@ -98,7 +108,7 @@ Returned by the admin subsystem (`/api/admin/*`). The route gate (`requireRole` 
 | `INVALID_GITHUB_CODE` | 400          | GitHub authorization-code exchange failed. (A missing or non-string `code` is now rejected upstream as `VALIDATION_ERROR`.) | `verifyGithubCodeAndFetchProfile`                |
 | `INVALID_ID`          | 400          | Path parameter wasn't a valid Mongo ObjectId.                                    | `validateId` middleware, also auto-converted from Mongoose `CastError` |
 | `INVALID_ID_TOKEN`    | 400          | Google ID-token verification failed. (A missing or non-string `idToken` is now rejected upstream as `VALIDATION_ERROR`.)        | `verifyGoogleIdToken`                            |
-| `VALIDATION_ERROR`    | 400 / 422    | Request body failed Zod validation at the route (`400`), or Mongoose schema validation failed on `.save()`/`.create()` (`422`, auto-converted).               | `validateBody` middleware (`400`) — wired on the auth routes and the directory / file-rename / drive-import routes; auto-converted from Mongoose `ValidationError` (`422`) |
+| `VALIDATION_ERROR`    | 400 / 422    | Request body failed Zod validation at the route (`400`), or Mongoose schema validation failed on `.save()`/`.create()` (`422`, auto-converted).               | `validateBody` middleware (`400`) — wired on the auth routes, the user-profile route (`PATCH /api/users/profile`), and the directory / file-rename / drive-import routes; auto-converted from Mongoose `ValidationError` (`422`) |
 
 ### OTP
 
@@ -186,7 +196,7 @@ Frontend code should always switch on `code` to drive UI behavior. Never parse `
 
 ### Naming history
 
-`USER_NOT_FOUND` exists despite there being no public endpoint that returns it directly — it's used internally by the OTP and password-reset flows. The frontend often won't see this code in normal operation; it's mostly for log diagnostics.
+`USER_NOT_FOUND` exists despite there being almost no public endpoint that returns it directly — it's used internally by the OTP and password-reset flows (and, in a rare race, by `PATCH /api/users/profile`). The frontend often won't see this code in normal operation; it's mostly for log diagnostics.
 
 ### Currently unused codes
 
