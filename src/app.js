@@ -1,6 +1,7 @@
 //* src/app.js
 
 import express from "express";
+import helmet from "helmet";
 import cors from "cors";
 import cookieParser from "cookie-parser";
 
@@ -22,10 +23,17 @@ const allowedOrigins = [APP_ORIGIN];
 
 /**
  * Express Config Middlewares
+ * - Security Headers (Helmet)
  * - CORS
  * - JSON Body Parser
  * - Cookie Parser
  */
+app.use(
+	helmet({
+		crossOriginResourcePolicy: { policy: "same-site" },
+	}),
+);
+
 app.use(
 	cors({
 		origin: allowedOrigins,

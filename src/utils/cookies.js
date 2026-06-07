@@ -10,7 +10,7 @@ const setAuthCookie = (res, sessionId) => {
 	res.cookie("token", sessionId, {
 		httpOnly: true,
 		signed: true,
-		sameSite: isProd ? "none" : "lax",
+		sameSite: "lax",
 		maxAge: SEVEN_DAYS_MS,
 		secure: isProd,
 	});
@@ -20,7 +20,7 @@ const clearAuthCookie = (res) => {
 	res.clearCookie("token", {
 		httpOnly: true,
 		signed: true,
-		sameSite: isProd ? "none" : "lax",
+		sameSite: "lax",
 		secure: isProd,
 	});
 };
