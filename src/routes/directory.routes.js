@@ -15,6 +15,11 @@ import {
 import authenticate from "../middlewares/auth.middleware.js";
 import { validateBody, validateId } from "../middlewares/validate.middleware.js";
 import {
+	readLimiter,
+	mutationLimiter,
+	destructiveLimiter,
+} from "../middlewares/rateLimit.middleware.js";
+import {
 	createDirectorySchema,
 	renameDirectorySchema,
 } from "../validators/directory.validator.js";
@@ -33,7 +38,7 @@ directoryRouter.use(authenticate);
  * Get directory contents by id
  * @route GET /api/directories/{:id}
  */
-directoryRouter.get("{/:id}", getDirectoryHandler);
+directoryRouter.get("{/:id}", readLimiter, getDirectoryHandler);
 
 /**
  * Create a new directory
@@ -41,6 +46,7 @@ directoryRouter.get("{/:id}", getDirectoryHandler);
  */
 directoryRouter.post(
 	"{/:parentDirId}",
+	mutationLimiter,
 	validateBody(createDirectorySchema),
 	createDirectoryHandler,
 );
@@ -51,6 +57,7 @@ directoryRouter.post(
  */
 directoryRouter.patch(
 	"/:id",
+	mutationLimiter,
 	validateBody(renameDirectorySchema),
 	updateDirectoryHandler,
 );
@@ -59,6 +66,6 @@ directoryRouter.patch(
  * Delete a directory and all its children
  * @route DELETE /api/directories/{:id}
  */
-directoryRouter.delete("/:id", deleteDirectoryHandler);
+directoryRouter.delete("/:id", destructiveLimiter, deleteDirectoryHandler);
 
 export default directoryRouter;

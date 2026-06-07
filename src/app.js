@@ -11,6 +11,7 @@ import appErrorCode from "./constants/appErrorCode.js";
 
 import AppError from "./errors/AppError.js";
 import globalErrorHandler from "./middlewares/error.middleware.js";
+import { globalLimiter } from "./middlewares/rateLimit.middleware.js";
 
 import routes from "./routes/index.js";
 
@@ -21,12 +22,17 @@ const { ROUTE_NOT_FOUND } = appErrorCode;
 const app = express();
 const allowedOrigins = [APP_ORIGIN];
 
+// Trust the Cloudflare proxy hop so req.ip / req.protocol reflect the client.
+// Rate-limit keying prefers CF-Connecting-IP regardless (see clientKey).
+app.set("trust proxy", 1);
+
 /**
  * Express Config Middlewares
  * - Security Headers (Helmet)
  * - CORS
  * - JSON Body Parser
  * - Cookie Parser
+ * - Global Rate Limiter
  */
 app.use(
 	helmet({
@@ -44,6 +50,7 @@ app.use(
 
 app.use(express.json({ limit: "1mb" }));
 app.use(cookieParser(COOKIE_SECRET));
+app.use(globalLimiter);
 
 /**
  * Health Check Endpoint & Home Route

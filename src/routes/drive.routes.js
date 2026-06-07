@@ -9,6 +9,7 @@ import { Router } from "express";
 import { importDriveHandler } from "../controllers/drive.controller.js";
 import authenticate from "../middlewares/auth.middleware.js";
 import { validateBody } from "../middlewares/validate.middleware.js";
+import { driveLimiter } from "../middlewares/rateLimit.middleware.js";
 import { importDriveSchema } from "../validators/drive.validator.js";
 
 const driveRouter = Router();
@@ -22,6 +23,7 @@ driveRouter.use(authenticate);
  */
 driveRouter.post(
 	"/import",
+	driveLimiter,
 	validateBody(importDriveSchema),
 	importDriveHandler,
 );
