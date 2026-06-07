@@ -22,6 +22,10 @@ import {
 
 import authenticate from "../middlewares/auth.middleware.js";
 import { validateBody } from "../middlewares/validate.middleware.js";
+import {
+	authLimiter,
+	oauthLimiter,
+} from "../middlewares/rateLimit.middleware.js";
 
 import {
 	registerSchema,
@@ -42,6 +46,7 @@ const authRouter = Router();
  */
 authRouter.post(
 	"/register",
+	authLimiter,
 	validateBody(registerSchema),
 	registerHandler,
 );
@@ -52,6 +57,7 @@ authRouter.post(
  */
 authRouter.post(
 	"/register/verify-otp",
+	authLimiter,
 	validateBody(verifyOtpSchema),
 	verifyOTPHandler,
 );
@@ -62,6 +68,7 @@ authRouter.post(
  */
 authRouter.post(
 	"/register/resend-otp",
+	authLimiter,
 	validateBody(resendOtpSchema),
 	resendOTPHandler,
 );
@@ -72,6 +79,7 @@ authRouter.post(
  */
 authRouter.post(
 	"/forgot-password",
+	authLimiter,
 	validateBody(forgotPasswordSchema),
 	forgotPasswordHandler,
 );
@@ -82,6 +90,7 @@ authRouter.post(
  */
 authRouter.post(
 	"/reset-password",
+	authLimiter,
 	validateBody(resetPasswordSchema),
 	resetPasswordHandler,
 );
@@ -90,7 +99,7 @@ authRouter.post(
  * Login a user
  * @route POST /api/auth/login
  */
-authRouter.post("/login", validateBody(loginSchema), loginHandler);
+authRouter.post("/login", authLimiter, validateBody(loginSchema), loginHandler);
 
 /**
  * Logout a user
@@ -110,6 +119,7 @@ authRouter.post("/logout-all", authenticate, logoutAllHandler);
  */
 authRouter.post(
 	"/google",
+	oauthLimiter,
 	validateBody(googleOAuthSchema),
 	googleOAuthHandler,
 );
@@ -120,6 +130,7 @@ authRouter.post(
  */
 authRouter.post(
 	"/github",
+	oauthLimiter,
 	validateBody(githubOAuthSchema),
 	githubOAuthHandler,
 );

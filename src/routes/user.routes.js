@@ -14,16 +14,25 @@ import {
 
 import authenticate from "../middlewares/auth.middleware.js";
 import { validateBody } from "../middlewares/validate.middleware.js";
+import {
+	uploadLimiter,
+	publicReadLimiter,
+	mutationLimiter,
+} from "../middlewares/rateLimit.middleware.js";
 import { updateProfileSchema } from "../validators/user.validator.js";
 
 const userRouter = Router();
 
 /**
- * Get a profile picture by ID. PUBLIC — registered BEFORE
- * `authenticate` so an <img> can load it cross-origin without a cookie.
+ * Get a profile picture by ID. PUBLIC — before `authenticate` so the SPA's
+ * <img> loads it without a cookie (cross-origin but same-site).
  * @route GET /api/users/profile-picture/:id
  */
-userRouter.get("/profile-picture/:id", getProfilePictureHandler);
+userRouter.get(
+	"/profile-picture/:id",
+	publicReadLimiter,
+	getProfilePictureHandler,
+);
 
 // All routes below require authentication
 userRouter.use(authenticate);
@@ -34,6 +43,7 @@ userRouter.use(authenticate);
  */
 userRouter.patch(
 	"/profile",
+	mutationLimiter,
 	validateBody(updateProfileSchema),
 	updateProfileHandler,
 );
@@ -42,6 +52,6 @@ userRouter.patch(
  * Upload / replace the authenticated user's profile picture
  * @route POST /api/users/profile-picture
  */
-userRouter.post("/profile-picture", uploadProfilePictureHandler);
+userRouter.post("/profile-picture", uploadLimiter, uploadProfilePictureHandler);
 
 export default userRouter;

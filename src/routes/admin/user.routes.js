@@ -19,6 +19,12 @@ import {
 } from "../../controllers/admin/user.controller.js";
 import { validateId } from "../../middlewares/validate.middleware.js";
 import { requireSuperadmin } from "../../middlewares/authorize.middleware.js";
+import {
+	readLimiter,
+	mutationLimiter,
+	destructiveLimiter,
+	hardDeleteLimiter,
+} from "../../middlewares/rateLimit.middleware.js";
 
 const adminUserRouter = Router();
 
@@ -29,25 +35,35 @@ adminUserRouter.param("id", validateId);
  * List all users
  * @route GET /api/admin/users
  */
-adminUserRouter.get("/", listUsersHandler);
+adminUserRouter.get("/", readLimiter, listUsersHandler);
 
 /**
  * Get a single user's details
  * @route GET /api/admin/users/:id
  */
-adminUserRouter.get("/:id", getUserByIdHandler);
+adminUserRouter.get("/:id", readLimiter, getUserByIdHandler);
 
 /**
  * Change a user's role, only superadmins can do this
  * @route PATCH /api/admin/users/:id/role
  */
-adminUserRouter.patch("/:id/role", requireSuperadmin(), changeUserRoleHandler);
+adminUserRouter.patch(
+	"/:id/role",
+	destructiveLimiter,
+	requireSuperadmin(),
+	changeUserRoleHandler,
+);
 
 /**
  * Suspend a user (revokes all active sessions)
  * @route PATCH /api/admin/users/:id/suspend
  */
-adminUserRouter.patch("/:id/suspend", requireSuperadmin(), suspendUserHandler);
+adminUserRouter.patch(
+	"/:id/suspend",
+	destructiveLimiter,
+	requireSuperadmin(),
+	suspendUserHandler,
+);
 
 /**
  * Lift a user's suspension
@@ -55,6 +71,7 @@ adminUserRouter.patch("/:id/suspend", requireSuperadmin(), suspendUserHandler);
  */
 adminUserRouter.patch(
 	"/:id/unsuspend",
+	mutationLimiter,
 	requireSuperadmin(),
 	unsuspendUserHandler,
 );
@@ -63,7 +80,7 @@ adminUserRouter.patch(
  * Force logout a user (revokes all active sessions)
  * @route POST /api/admin/users/:id/logout
  */
-adminUserRouter.post("/:id/logout", forceLogoutUserHandler);
+adminUserRouter.post("/:id/logout", mutationLimiter, forceLogoutUserHandler);
 
 /**
  * Soft-delete a user
@@ -71,6 +88,7 @@ adminUserRouter.post("/:id/logout", forceLogoutUserHandler);
  */
 adminUserRouter.delete(
 	"/:id/soft-delete",
+	destructiveLimiter,
 	requireSuperadmin(),
 	softDeleteUserHandler,
 );
@@ -81,6 +99,7 @@ adminUserRouter.delete(
  */
 adminUserRouter.delete(
 	"/:id/hard-delete",
+	hardDeleteLimiter,
 	requireSuperadmin(),
 	hardDeleteUserHandler,
 );
@@ -89,6 +108,11 @@ adminUserRouter.delete(
  * Restore a soft-deleted user
  * @route POST /api/admin/users/:id/restore
  */
-adminUserRouter.post("/:id/restore", requireSuperadmin(), restoreUserHandler);
+adminUserRouter.post(
+	"/:id/restore",
+	mutationLimiter,
+	requireSuperadmin(),
+	restoreUserHandler,
+);
 
 export default adminUserRouter;

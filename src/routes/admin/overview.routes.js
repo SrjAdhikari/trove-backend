@@ -8,6 +8,7 @@
 import { Router } from "express";
 
 import { getOverviewHandler } from "../../controllers/admin/overview.controller.js";
+import { readLimiter } from "../../middlewares/rateLimit.middleware.js";
 
 const adminOverviewRouter = Router();
 
@@ -15,6 +16,6 @@ const adminOverviewRouter = Router();
  * Point-in-time system aggregates for the admin dashboard
  * @route GET /api/admin/overview
  */
-adminOverviewRouter.get("/", getOverviewHandler);
+adminOverviewRouter.get("/", readLimiter, getOverviewHandler);
 
 export default adminOverviewRouter;

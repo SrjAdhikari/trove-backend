@@ -15,6 +15,12 @@ import {
 
 import authenticate from "../middlewares/auth.middleware.js";
 import { validateBody, validateId } from "../middlewares/validate.middleware.js";
+import {
+	uploadLimiter,
+	readLimiter,
+	mutationLimiter,
+	destructiveLimiter,
+} from "../middlewares/rateLimit.middleware.js";
 import { renameFileSchema } from "../validators/file.validator.js";
 
 const fileRouter = Router();
@@ -31,24 +37,29 @@ fileRouter.use(authenticate);
  * Get a file by id
  * @route GET /api/files/{:id}
  */
-fileRouter.get("/:id", getFileHandler);
+fileRouter.get("/:id", readLimiter, getFileHandler);
 
 /**
  * Upload a new file
  * @route POST /api/files/{:parentDirId}
  */
-fileRouter.post("{/:parentDirId}", uploadFileHandler);
+fileRouter.post("{/:parentDirId}", uploadLimiter, uploadFileHandler);
 
 /**
  * Update (Rename) a file
  * @route PATCH /api/files/{:id}
  */
-fileRouter.patch("/:id", validateBody(renameFileSchema), updateFileHandler);
+fileRouter.patch(
+	"/:id",
+	mutationLimiter,
+	validateBody(renameFileSchema),
+	updateFileHandler,
+);
 
 /**
  * Delete a file
  * @route DELETE /api/files/{:id}
  */
-fileRouter.delete("/:id", deleteFileHandler);
+fileRouter.delete("/:id", destructiveLimiter, deleteFileHandler);
 
 export default fileRouter;
