@@ -1,6 +1,6 @@
 # Error Codes
 
-> **Status:** As-of 2026-06-02. This document is a glossary that drifts as the codebase evolves — refresh it when adding or removing codes from `src/constants/appErrorCode.js`.
+> **Status:** As-of 2026-06-07. This document is a glossary that drifts as the codebase evolves — refresh it when adding or removing codes from `src/constants/appErrorCode.js`.
 
 The TroveCloud backend returns structured errors with stable, machine-readable codes. The frontend consumes these codes to drive UI behavior (which form to redirect to, which message to show, when to retry). This document is the contract: the source of truth for what each code means and where it's thrown.
 
@@ -125,6 +125,7 @@ Returned by the `/api/users/profile-picture` endpoints (authenticated upload/rep
 | --------------------- | ------------ | ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
 | `INTERNAL_ERROR`      | 500          | Catch-all for unexpected errors. Sets `isOperational: false` so the original message is hidden in production. | `globalErrorHandler` fallback when no other handler matches        |
 | `INVALID_INPUT`       | 400          | A file-upload filename header couldn't be URL-decoded, or an admin action was rejected because the target's lifecycle state precludes it (e.g., suspending an already-suspended user, restoring a user who is not soft-deleted, unknown role/status filter). _(Directory / file-rename / drive-import body validation now returns `VALIDATION_ERROR` — moved to Zod in PR #44.)_ | `uploadFileHandler` in `file.controller.js` (filename-header decode); state-guard branches across the admin mutation handlers in `src/services/admin/user.service.js` |
+| `RATE_LIMITED`        | 429          | Request exceeded a rate limit. Routed through `globalErrorHandler` as the standard envelope; responses also carry `RateLimit-*` headers.                       | The `handler` in `src/middlewares/rateLimit.middleware.js` — the global backstop or any per-tier limiter (auth/oauth/publicRead/read/mutation/destructive/hardDelete/upload/drive) |
 | `ROUTE_NOT_FOUND`     | 404          | Requested URL didn't match any registered route.                                                              | 404 handler in `app.js`                                            |
 
 ### Drive Import
@@ -206,8 +207,6 @@ Frontend code should always switch on `code` to drive UI behavior. Never parse `
 
 ### Deferred / planned codes
 
-The following codes will likely be added when their corresponding features land:
-
-- `RATE_LIMIT_EXCEEDED` (429) — when express-rate-limit (or equivalent) is added during the security-section work.
+_None currently._ Rate limiting shipped in PR #54 as `RATE_LIMITED` (429) — see the **General** group above. The earlier placeholder name `RATE_LIMIT_EXCEEDED` was not used.
 
 ---

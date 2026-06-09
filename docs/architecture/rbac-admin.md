@@ -27,7 +27,7 @@ The intent is to lay the **foundation** for future admin tooling cleanly — ext
 **Explicitly out of scope (deferred):**
 - **Admin audit log (`AdminAuditLog` collection + `GET /admin/audit` endpoint + write call sites).** Deferred to a follow-up PR. Rationale: at single-admin scale the "who did what" trail collapses to "I did it." When a second admin is onboarded — or a compliance posture is needed — re-add as PR 3. The mutation handlers will need to be re-touched to wire in audit writes, but each touch is small.
 - Fine-grained permissions array (revisit if multiple admin tiers ever need to be split)
-- Rate limiting on admin routes (deferred globally)
+- ~~Rate limiting on admin routes (deferred globally)~~ — **implemented** in PR #54: admin reads use the `read` tier, mutations the `mutation` / `destructive` tiers, hard-delete the `hardDelete` tier (`src/middlewares/rateLimit.middleware.js`)
 - Zod validation (deferred globally)
 - Overview time-series, charts, signup funnels — v1 is point-in-time counters only
 - Email notifications to suspended/deleted users

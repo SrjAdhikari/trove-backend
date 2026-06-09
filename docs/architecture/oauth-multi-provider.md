@@ -210,7 +210,6 @@ These are deliberately not implemented. Each represents a future feature, not an
 - **Refresh tokens / persistent provider sessions.** No refresh token storage. If a feature later needs ongoing access to the provider's APIs (e.g., periodic Drive sync), it would add per-user token storage as a separate concern.
 - **Provider-managed profile data beyond name/email/picture.** Phone number, locale, organizational affiliation, etc. — none are stored even when the provider exposes them.
 - **OAuth scope expansion at sign-in.** Both providers stay at minimal sign-in scopes. Scope-expansion flows (e.g., "let me read your Drive files") would be a separate user-initiated action, not bundled into sign-in.
-- **Rate limiting on `/auth/google` and `/auth/github`.** Tracked separately for the security-section work.
 
 ---
 
@@ -246,7 +245,7 @@ No `*_CALLBACK_URL` on the backend — the frontend owns OAuth redirect URLs.
 ### Deferred work tracked in memory
 
 - OAuth body type-checking (currently truthy-only) → covered when backend Zod validation lands.
-- Rate limiting on the OAuth endpoints → covered during the Node.js course security section.
+- Rate limiting on the OAuth endpoints → **implemented** (PR #54): the `oauth` tier in `src/middlewares/rateLimit.middleware.js` (20 / 15 min, keyed by IP).
 - Account linking → no concrete plan; would require schema changes.
 
 ---
