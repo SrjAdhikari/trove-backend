@@ -45,4 +45,11 @@ describe("renameFileSchema", () => {
 		});
 		expect(result.data.newFileName).toHaveLength(255);
 	});
+
+	it("strips embedded HTML from the file name", () => {
+		const result = renameFileSchema.safeParse({
+			newFileName: "report<script>alert(1)</script>.pdf",
+		});
+		expect(result.data.newFileName).toBe("report.pdf");
+	});
 });

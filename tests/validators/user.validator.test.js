@@ -49,4 +49,19 @@ describe("updateProfileSchema", () => {
 		});
 		expect(result.data).toEqual({ name: "Jane Doe" });
 	});
+
+	it("strips embedded HTML from name, keeping the visible text", () => {
+		const result = updateProfileSchema.safeParse({
+			name: "Alice<script>alert(1)</script>",
+		});
+		expect(result.success).toBe(true);
+		expect(result.data.name).toBe("Alice");
+	});
+
+	it("rejects a name that is entirely HTML (sanitizes to empty)", () => {
+		expect(
+			updateProfileSchema.safeParse({ name: "<script>alert(1)</script>" })
+				.success,
+		).toBe(false);
+	});
 });

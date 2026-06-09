@@ -1,13 +1,15 @@
 //* src/validators/directory.validator.js
 
 import { z } from "zod";
+import sanitizeInput from "../utils/sanitizeInput.js";
 
 const MAX_NAME_LENGTH = 255;
 const DEFAULT_DIR_NAME = "New Folder";
 
-// Strip control characters and path dividers, then trim and bound length.
+// Strip control characters and path dividers,
+// strip any HTML, then trim and bound length.
 const sanitizeDirName = (value) =>
-	value
+	sanitizeInput(value)
 		.replace(/[\r\n\t\\/]/g, "")
 		.trim()
 		.slice(0, MAX_NAME_LENGTH);

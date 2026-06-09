@@ -90,6 +90,39 @@ describe("registerSchema", () => {
 			registerSchema.safeParse({ ...valid, name: { $ne: "" } }).success,
 		).toBe(false);
 	});
+
+	it("strips embedded HTML from name, keeping the visible text", () => {
+		const result = registerSchema.safeParse({
+			...valid,
+			name: "Alice<script>alert(1)</script>",
+		});
+		expect(result.success).toBe(true);
+		expect(result.data.name).toBe("Alice");
+	});
+
+	it("rejects a name that is entirely HTML (sanitizes to empty)", () => {
+		expect(
+			registerSchema.safeParse({
+				...valid,
+				name: "<script>alert(1)</script>",
+			}).success,
+		).toBe(false);
+	});
+
+	it("rejects a name whose visible text is under 3 chars after stripping tag spaces", () => {
+		expect(
+			registerSchema.safeParse({ ...valid, name: "<b> Al </b>" }).success,
+		).toBe(false);
+	});
+
+	it("never sanitizes the password, even with angle brackets", () => {
+		const result = registerSchema.safeParse({
+			...valid,
+			password: "P@ss<w>ord1",
+		});
+		expect(result.success).toBe(true);
+		expect(result.data.password).toBe("P@ss<w>ord1");
+	});
 });
 
 describe("loginSchema", () => {

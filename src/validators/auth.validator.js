@@ -1,13 +1,16 @@
 //* src/validators/auth.validator.js
 
 import { z } from "zod";
+import sanitizeInput from "../utils/sanitizeInput.js";
 
 const name = z
 	.string()
 	.trim()
-	.nonempty("Name is required")
-	.min(3, "Name must be between 3 and 50 characters")
-	.max(50, "Name must be between 3 and 50 characters");
+	.transform(sanitizeInput)
+	.refine(
+		(value) => value.length >= 3 && value.length <= 50,
+		"Name is required and must be between 3 and 50 characters",
+	);
 
 const email = z
 	.string()
@@ -22,9 +25,15 @@ const password = z
 	.regex(/[a-z]/, "Password must contain at least one lowercase letter")
 	.regex(/[A-Z]/, "Password must contain at least one uppercase letter")
 	.regex(/[0-9]/, "Password must contain at least one number")
-	.regex(/[^A-Za-z0-9]/, "Password must contain at least one special character");
+	.regex(
+		/[^A-Za-z0-9]/,
+		"Password must contain at least one special character",
+	);
 
-const otp = z.string().trim().regex(/^\d{6}$/, "OTP must be a 6-digit code");
+const otp = z
+	.string()
+	.trim()
+	.regex(/^\d{6}$/, "OTP must be a 6-digit code");
 
 const registerSchema = z.object({
 	name,

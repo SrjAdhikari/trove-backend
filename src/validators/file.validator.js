@@ -1,16 +1,17 @@
 //* src/validators/file.validator.js
 
 import path from "node:path";
-
 import { z } from "zod";
+
+import sanitizeInput from "../utils/sanitizeInput.js";
 
 const MAX_NAME_LENGTH = 255;
 
-// Reduce to a base name (defuses traversal), strip control characters and
-// backslashes, then trim and bound length.
+// Strip any HTML, then reduce to a base name (defuses traversal),
+// strip control characters and backslashes, trim and bound length.
 const sanitizeFileName = (value) =>
 	path
-		.basename(value)
+		.basename(sanitizeInput(value))
 		.replace(/[\r\n\t\\]/g, "")
 		.trim()
 		.slice(0, MAX_NAME_LENGTH);

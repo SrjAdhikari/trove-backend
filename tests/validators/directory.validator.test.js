@@ -81,3 +81,19 @@ describe("renameDirectorySchema", () => {
 		expect(result.data.newDirName).toHaveLength(255);
 	});
 });
+
+describe("directory validators — HTML sanitization", () => {
+	it("strips embedded HTML from a created folder name", () => {
+		const result = createDirectorySchema.safeParse({
+			name: "Reports<script>alert(1)</script>",
+		});
+		expect(result.data.name).toBe("Reports");
+	});
+
+	it("strips embedded HTML from a renamed directory name", () => {
+		const result = renameDirectorySchema.safeParse({
+			newDirName: "Archive<script>alert(1)</script>",
+		});
+		expect(result.data.newDirName).toBe("Archive");
+	});
+});
