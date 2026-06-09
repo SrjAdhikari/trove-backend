@@ -35,9 +35,12 @@ const { PROVIDER_MISMATCH, UNAUTHORIZED_ACCESS, ACCOUNT_SUSPENDED } =
 const loginOrCreateOAuthUser = async (provider, profile, deviceInfo) => {
 	const { name: providerName, email, picture } = profile;
 
-	// Sanitize and limit the display name to prevent XSS and database overflow issues.
+	// Sanitize the display name to prevent XSS and database overflow issues.
+	const sanitizedName = sanitizeInput(providerName);
+
+	// Use the sanitized name if available; otherwise, derive a name from the email prefix.
 	// Provider names can be very long, so we truncate to fit within the User.name limit.
-	const name = sanitizeInput(providerName).slice(0, 100);
+	const name = (sanitizedName || email.split("@")[0]).slice(0, 100);
 
 	const existingUser = await User.findOne({ email }).lean();
 
