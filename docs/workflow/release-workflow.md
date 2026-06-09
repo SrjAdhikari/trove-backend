@@ -275,7 +275,7 @@ TroveCloud will tag `v1.0.0` on both repos when all of the following are true:
 - [ ] OAuth frontend integration (Google + GitHub UI flows wired to the existing backend endpoints)
 - [ ] Forgot-password feature shipped end-to-end (backend service + endpoint + frontend form)
 - [ ] Deployed somewhere reachable with a public URL
-- [ ] Deferred P0 security items addressed — at minimum rate limiting (planned as course work)
+- [ ] Deferred P0 security items addressed — rate limiting + security headers / `SameSite=Lax` shipped (PR #53/#54); remaining: lock origin to Cloudflare (issue #55) + input sanitization (security hardening Phase 3)
 - [ ] Google Drive import decided: included in v1.0 or explicitly out of scope
 
 Until then, each meaningful feature bumps minor (`v0.2.0`, `v0.3.0`, etc.); bug-fix batches bump patch (`v0.2.1`).

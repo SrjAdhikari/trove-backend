@@ -81,7 +81,7 @@ A bespoke `OTP_NOT_REQUESTED` code was considered (see CodeRabbit review on PR #
 
 ### Why the cooldown is enforced on send, not on verify
 
-A 60-second cooldown on `forgot-password` blocks email-service abuse. There is **no** per-account / per-IP attempt counter on `reset-password` — the OTP space is 6 digits (1M values) over a 10-minute window, which a high-volume attacker could theoretically bruteforce. The intended mitigation is a network-layer rate limiter applied to all auth endpoints; that work is deferred until the broader security pass and is intentionally not added piecemeal here.
+A 60-second cooldown on `forgot-password` blocks email-service abuse. The OTP space is 6 digits (1M values) over a 10-minute window, which a high-volume attacker could theoretically bruteforce. The mitigation — a rate limiter on all auth endpoints — **shipped in PR #54**: `reset-password` (and the other auth routes) sit behind the `auth` tier (≈10 requests / 15 min, keyed by IP), bounding brute-force attempts. A per-account OTP attempt-lockout (distinct from the IP limiter) is still a separate planned item.
 
 ---
 
