@@ -108,3 +108,20 @@ describe("oauth.service.loginOrCreateOAuthUser — login does not clobber app-ma
 		);
 	});
 });
+
+describe("oauth.service.loginOrCreateOAuthUser — sanitizes provider display name (XSS)", () => {
+	it("strips HTML from a malicious provider name before persisting", async () => {
+		const email = "xss-oauth-name@example.com";
+
+		const result = await loginOrCreateOAuthUser(
+			"google",
+			{ name: "Eve<script>alert(1)</script>", email, picture: null },
+			DEVICE,
+		);
+
+		expect(result.isNewUser).toBe(true);
+
+		const user = await User.findOne({ email }).lean();
+		expect(user.name).toBe("Eve");
+	});
+});
