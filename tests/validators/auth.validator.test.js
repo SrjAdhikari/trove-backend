@@ -109,6 +109,12 @@ describe("registerSchema", () => {
 		).toBe(false);
 	});
 
+	it("rejects a name whose visible text is under 3 chars after stripping tag spaces", () => {
+		expect(
+			registerSchema.safeParse({ ...valid, name: "<b> Al </b>" }).success,
+		).toBe(false);
+	});
+
 	it("never sanitizes the password, even with angle brackets", () => {
 		const result = registerSchema.safeParse({
 			...valid,

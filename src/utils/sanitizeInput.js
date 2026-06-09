@@ -15,7 +15,9 @@ const purify = DOMPurify(window);
  */
 const sanitizeInput = (input) => {
 	if (typeof input !== "string") return "";
-	return purify.sanitize(input, { ALLOWED_TAGS: [], ALLOWED_ATTR: [] });
+
+	// Trim because stripping tags can leave edge whitespace ("<b> Al </b>" -> " Al ").
+	return purify.sanitize(input, { ALLOWED_TAGS: [], ALLOWED_ATTR: [] }).trim();
 };
 
 export default sanitizeInput;

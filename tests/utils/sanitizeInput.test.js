@@ -37,4 +37,10 @@ describe("sanitizeInput", () => {
 		expect(sanitizeInput(null)).toBe("");
 		expect(sanitizeInput(undefined)).toBe("");
 	});
+
+	// Tag-stripping can re-introduce edge whitespace ("<b> Al </b>" -> " Al "),
+	// so the output is trimmed — keeps the downstream length gate honest.
+	it("trims edge whitespace left behind by stripped tags", () => {
+		expect(sanitizeInput("<b> Al </b>")).toBe("Al");
+	});
 });
