@@ -5,7 +5,7 @@ import mongoose from "mongoose";
 import Directory from "../models/directory.model.js";
 import File from "../models/file.model.js";
 import AppError from "../errors/AppError.js";
-import { STORAGE_ROOT, buildFilePath } from "../utils/storagePath.js";
+import { buildFilePath } from "../utils/storagePath.js";
 import httpStatus from "../constants/httpStatus.js";
 import appErrorCode from "../constants/appErrorCode.js";
 
@@ -14,7 +14,6 @@ const {
 	DIRECTORY_NOT_FOUND,
 	DIRECTORY_RENAME_FAILED,
 	DIRECTORY_DELETE_FAILED,
-	FILE_DELETE_FAILED,
 } = appErrorCode;
 
 /**
@@ -176,17 +175,10 @@ const deleteDirectory = async (directoryId, userId) => {
 		userId,
 	}).lean();
 
-	// Step 4:  Validate all file paths before any deletion
-	const filePaths = allFiles.map((file) => {
-		const filePath = buildFilePath(file);
-
-		// Guard against path traversal attacks
-		if (!filePath.startsWith(STORAGE_ROOT)) {
-			throw new AppError("Invalid file path", BAD_REQUEST, FILE_DELETE_FAILED);
-		}
-
-		return filePath;
-	});
+	// Step 4: Build all physical file paths. buildFilePath throws on any path
+	// that escapes STORAGE_ROOT, so a malicious entry aborts the whole delete
+	// here — before Step 5 touches the DB.
+	const filePaths = allFiles.map((file) => buildFilePath(file));
 
 	// Step 5: Delete all files and directories from the DB atomically
 	const session = await mongoose.startSession();
