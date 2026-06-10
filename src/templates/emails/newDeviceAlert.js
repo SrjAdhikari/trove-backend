@@ -7,6 +7,7 @@ import {
 	mutedParagraph,
 	paragraph,
 } from "./_components.js";
+import sanitizeInput from "../../utils/sanitizeInput.js";
 
 /**
  * Security alert sent when a new device / browser signs into the TroveCloud account.
@@ -42,10 +43,10 @@ const NEW_DEVICE_ALERT_EMAIL_TEMPLATE = (
 				{ label: "When", value: formatted },
 				{
 					label: "Device",
-					value: `${deviceInfo.browser} on ${deviceInfo.deviceOS}`,
+					value: `${sanitizeInput(deviceInfo.browser)} on ${sanitizeInput(deviceInfo.deviceOS)}`,
 				},
-				{ label: "Device type", value: deviceInfo.deviceType },
-				{ label: "IP address", value: deviceInfo.ipAddress },
+				{ label: "Device type", value: sanitizeInput(deviceInfo.deviceType) },
+				{ label: "IP address", value: sanitizeInput(deviceInfo.ipAddress) },
 			])}
 			${infoCallout("If you do not recognize this sign-in, sign out of all devices from your account settings and change your password immediately. If you signed in via Google or GitHub, revoke the session from your identity provider's security settings as well.")}
 			${mutedParagraph("This alert is sent the first time a new device or browser signs in to your account.")}
