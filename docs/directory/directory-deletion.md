@@ -32,7 +32,7 @@ The Directory deletion logic adheres to the Controller-Service pattern, with aut
   3. **Edge Case Handled:** If the target directory has no `parentDirId` (i.e., it's the root directory), throws `AppError` with `BAD_REQUEST` and `DIRECTORY_DELETE_FAILED`. Root directories are permanent and cannot be deleted.
   4. Collects all directory IDs (target + nested) into `allDirIds`.
   5. Fetches all files within those directories via `File.find({ parentDirId: { $in: allDirIds }, userId })`.
-  6. **Path Validation:** Builds file paths and validates every path starts with `STORAGE_ROOT` before any deletion occurs. If any path fails validation, the entire operation aborts.
+  6. **Path Validation:** Builds every physical file path via `buildFilePath`, which throws if a path escapes `STORAGE_ROOT`. This runs before any deletion, so a malicious entry aborts the entire operation before the DB transaction.
   7. **Atomic DB Deletion:** Deletes all file and directory records within a `session.withTransaction()` — if either `deleteMany` fails, both roll back.
   8. **Physical File Cleanup:** After successful DB transaction, deletes physical files via `Promise.allSettled()`. Failures here do not roll back the DB operation — orphaned physical files are less harmful than phantom DB records.
   9. Returns the deleted root directory document.
@@ -111,7 +111,7 @@ The service explicitly checks `!rootDir.parentDirId` before proceeding. Root dir
 
 ### Path Traversal Guard
 
-Before any physical file deletion, each constructed file path is validated against `STORAGE_ROOT` using `path.join()` + `startsWith()`. A malicious `extension` field (e.g., `/../../../etc/passwd`) would produce a path outside `STORAGE_ROOT`, which is caught and aborts the entire operation before any file is touched.
+Path construction is centralized in `buildFilePath` (`src/utils/storagePath.js`), which rejects any path that escapes `STORAGE_ROOT` — compared as `STORAGE_ROOT + path.sep` so a same-prefixed sibling like `storage-evil` can't slip past. A malicious `extension` field (e.g., `/../../../etc/passwd`) produces such a path; `buildFilePath` throws `AppError(BAD_REQUEST, INVALID_INPUT)` during Step 4, aborting the entire operation before any DB or disk deletion occurs.
 
 ### Input Validation at Router Level
 
