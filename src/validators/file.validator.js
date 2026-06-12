@@ -23,4 +23,4 @@ const renameFileSchema = z.object({
 		.refine((value) => value.length > 0, "Valid file name is required"),
 });
 
-export { renameFileSchema };
+export { renameFileSchema, sanitizeFileName };

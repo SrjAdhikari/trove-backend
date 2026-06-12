@@ -1,13 +1,12 @@
 //* src/controllers/file.controller.js
 
-import path from "node:path";
-
 import {
 	getFile,
 	uploadFile,
 	updateFile,
 	deleteFile,
 } from "../services/file.service.js";
+import { sanitizeFileName } from "../validators/file.validator.js";
 
 import httpStatus from "../constants/httpStatus.js";
 import appErrorCode from "../constants/appErrorCode.js";
@@ -44,13 +43,9 @@ const uploadFileHandler = async (req, res) => {
 		throw new AppError("Invalid filename encoding", BAD_REQUEST, INVALID_INPUT);
 	}
 
-	// Security: Sanitize the filename to prevent header injection or directory traversal
-	fileName = path
-		.basename(fileName)
-		.replace(/[\r\n\t\\]/g, "")
-		.trim();
-	if (!fileName) fileName = "untitled";
-	if (fileName.length > 255) fileName = fileName.substring(0, 255);
+	// Filename header bypasses validateBody, so sanitize the input
+	// here to prevent header injection or directory traversal
+	fileName = sanitizeFileName(fileName) || "untitled";
 
 	const file = await uploadFile(parentDirId, user._id, fileName, req);
 

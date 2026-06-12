@@ -15,6 +15,7 @@ import {
 } from "../lib/googleDrive.js";
 
 import createByteCounter from "../utils/byteCounter.js";
+import sanitizeInput from "../utils/sanitizeInput.js";
 
 import httpStatus from "../constants/httpStatus.js";
 import appErrorCode from "../constants/appErrorCode.js";
@@ -38,14 +39,13 @@ const AGGREGATE_CAP_BYTES = 500 * 1000 * 1000;
 const MAX_DEPTH = 20;
 
 /**
- * Pads short names, truncates long names, strips control chars and path separators.
- * `Directory.name` is bounded to [3, 50] in Mongoose — this guarantees that.
+ * Strips HTML, pads short names, truncates long names, strips control chars
+ * and path separators. `Directory.name` is bounded to [3, 50] in Mongoose —
+ * this guarantees that.
  */
 const sanitizeDirName = (name) => {
-	let clean = typeof name === "string" ? name : "";
-
-	// Prevents header injection and traversal attacks
-	clean = clean.replace(/[\r\n\t\\/]/g, "").trim();
+	// sanitizeInput strips HTML and coerces non-strings to "".
+	let clean = sanitizeInput(name).replace(/[\r\n\t\\/]/g, "").trim();
 
 	if (!clean) clean = "Imported folder";
 	if (clean.length < 3) clean = (clean + "___").slice(0, 3);
@@ -55,15 +55,15 @@ const sanitizeDirName = (name) => {
 };
 
 /**
- * Produces a filename that satisfies `File.name` (minlength 3, no hard max in schema
- * but we cap at 255 to mirror the manual-upload controller). When `fallbackExt` is
- * supplied (Google-native export), ensures the name carries that extension so
- * `uploadFile`'s `path.extname` derives the correct `File.extension`.
+ * Strips HTML, then produces a filename that satisfies `File.name` (minlength 3,
+ * no hard max in schema but we cap at 255 to mirror the manual-upload controller).
+ * When `fallbackExt` is supplied (Google-native export), ensures the name carries
+ * that extension so `uploadFile`'s `path.extname` derives the correct `File.extension`.
  */
 const sanitizeFileName = (name, fallbackExt = "") => {
-	let clean = typeof name === "string" ? name : "";
-	clean = path
-		.basename(clean)
+	// sanitizeInput strips HTML and coerces non-strings to "".
+	let clean = path
+		.basename(sanitizeInput(name))
 		.replace(/[\r\n\t\\/]/g, "")
 		.trim();
 	if (!clean) clean = "untitled";
@@ -374,4 +374,4 @@ const importFromDrive = async (userId, accessToken, items, parentDirId) => {
 	return { imported: ctx.imported, failed: ctx.failed };
 };
 
-export { importFromDrive };
+export { importFromDrive, sanitizeDirName, sanitizeFileName };
