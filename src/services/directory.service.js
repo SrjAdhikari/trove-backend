@@ -44,18 +44,18 @@ const getDirectory = async (directoryId, userId) => {
 		getAncestors(directory._id, userId),
 	]);
 
-	// Add `id` and `fileCount` + `totalSize` for each child directory
-	const childDirectories = childDirs.map((dir) => ({
+	// Expose the stored subtree size as `totalSize`; drop the raw `size` field
+	// from the response so the contract stays totalSize/fileCount only.
+	const childDirectories = childDirs.map(({ size, ...dir }) => ({
 		...dir,
 		id: dir._id,
-		fileCount: dir.fileCount,
-		totalSize: dir.size,
+		totalSize: size,
 	}));
 
+	const { size, ...directoryView } = directory;
 	return {
-		...directory,
-		fileCount: directory.fileCount,
-		totalSize: directory.size,
+		...directoryView,
+		totalSize: size,
 		ancestors,
 		files: files.map((file) => ({ ...file, id: file._id })),
 		childDirectories,

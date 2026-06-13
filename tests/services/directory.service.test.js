@@ -171,6 +171,10 @@ describe("getDirectory reads stored sizes", () => {
 		);
 		expect(childView.totalSize).toBe(3);
 		expect(childView.fileCount).toBe(1);
+
+		// Contract: expose totalSize/fileCount only — not the raw stored `size`.
+		expect(data.size).toBeUndefined();
+		expect(childView.size).toBeUndefined();
 	});
 
 	it("reports zeros and an empty child list for an empty folder (boundary)", async () => {
