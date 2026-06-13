@@ -26,6 +26,16 @@ const directorySchema = {
 				description:
 					"userId must be a valid ObjectId referencing the owner user",
 			},
+			size: {
+				bsonType: "number",
+				minimum: 0,
+				description: "Total bytes of all files in this directory's subtree",
+			},
+			fileCount: {
+				bsonType: "number",
+				minimum: 0,
+				description: "Total number of files in this directory's subtree",
+			},
 			createdAt: {
 				bsonType: "date",
 			},
