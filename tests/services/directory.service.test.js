@@ -1,13 +1,22 @@
 import { describe, it, expect } from "vitest";
 import mongoose from "mongoose";
+import { Readable } from "node:stream";
+import { rm } from "node:fs/promises";
 
-import { adjustAncestorStats } from "../../src/services/directory.service.js";
+import { adjustAncestorStats, deleteDirectory } from "../../src/services/directory.service.js";
+import { uploadFile } from "../../src/services/file.service.js";
+import { buildFilePath } from "../../src/utils/storagePath.js";
 import Directory from "../../src/models/directory.model.js";
 import { createTestUser, createTestDirectory } from "../factories.js";
 
 const statsOf = async (id) => {
 	const d = await Directory.findById(id);
 	return { size: d.size, fileCount: d.fileCount };
+};
+
+const uploadInto = async (parentId, userId, name, body) => {
+	const file = await uploadFile(parentId, userId, name, Readable.from(Buffer.from(body)));
+	return file;
 };
 
 describe("adjustAncestorStats", () => {
@@ -84,5 +93,63 @@ describe("adjustAncestorStats", () => {
 		await adjustAncestorStats(root._id, { bytes: 50, files: 1 });
 		await adjustAncestorStats(root._id, { bytes: -200, files: -5 });
 		expect(await statsOf(root._id)).toEqual({ size: -150, fileCount: -4 });
+	});
+});
+
+describe("deleteDirectory maintains ancestor sizes", () => {
+	it("decrements the parent chain by the deleted subtree's totals", async () => {
+		const user = await createTestUser();
+		const root = await createTestDirectory(user._id);
+		const a = await createTestDirectory(user._id, { parentDirId: root._id });
+		const file = await uploadInto(a._id, user._id, "f.txt", "12345"); // 5
+
+		expect(await statsOf(root._id)).toEqual({ size: 5, fileCount: 1 });
+
+		await deleteDirectory(a._id, user._id);
+
+		expect(await statsOf(root._id)).toEqual({ size: 0, fileCount: 0 });
+		await rm(buildFilePath(file), { force: true });
+	});
+
+	it("decrements by the FULL nested subtree, not just direct children (worst case)", async () => {
+		const user = await createTestUser();
+		const root = await createTestDirectory(user._id);
+		const a = await createTestDirectory(user._id, { parentDirId: root._id });
+		const b = await createTestDirectory(user._id, { parentDirId: a._id });
+		const file = await uploadInto(b._id, user._id, "deep.txt", "1234567890"); // 10
+
+		expect(await statsOf(root._id)).toEqual({ size: 10, fileCount: 1 });
+
+		await deleteDirectory(a._id, user._id);
+
+		expect(await statsOf(root._id)).toEqual({ size: 0, fileCount: 0 });
+		await rm(buildFilePath(file), { force: true });
+	});
+
+	it("leaves a sibling subtree's contribution intact (isolation)", async () => {
+		const user = await createTestUser();
+		const root = await createTestDirectory(user._id);
+		const a = await createTestDirectory(user._id, { parentDirId: root._id });
+		const sibling = await createTestDirectory(user._id, { parentDirId: root._id });
+		const fa = await uploadInto(a._id, user._id, "a.txt", "aaa"); // 3
+		const fs = await uploadInto(sibling._id, user._id, "s.txt", "ss"); // 2
+
+		expect(await statsOf(root._id)).toEqual({ size: 5, fileCount: 2 });
+
+		await deleteDirectory(a._id, user._id);
+
+		expect(await statsOf(root._id)).toEqual({ size: 2, fileCount: 1 });
+		await rm(buildFilePath(fa), { force: true });
+		await rm(buildFilePath(fs), { force: true });
+	});
+
+	it("does not change ancestors when deleting an empty folder (boundary)", async () => {
+		const user = await createTestUser();
+		const root = await createTestDirectory(user._id);
+		const empty = await createTestDirectory(user._id, { parentDirId: root._id });
+
+		await deleteDirectory(empty._id, user._id);
+
+		expect(await statsOf(root._id)).toEqual({ size: 0, fileCount: 0 });
 	});
 });

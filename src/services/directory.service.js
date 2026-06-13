@@ -194,6 +194,13 @@ const deleteDirectory = async (directoryId, userId) => {
 				{ _id: { $in: allDirIds }, userId },
 				{ session },
 			);
+
+			// Subtract the deleted subtree's totals from every ancestor above it.
+			await adjustAncestorStats(
+				rootDir.parentDirId,
+				{ bytes: -rootDir.size, files: -rootDir.fileCount },
+				session,
+			);
 		});
 	} finally {
 		session.endSession();
