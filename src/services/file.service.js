@@ -1,5 +1,6 @@
 //* src/services/file.service.js
 
+import mongoose from "mongoose";
 import path from "node:path";
 import { rm } from "node:fs/promises";
 import { createWriteStream } from "node:fs";
@@ -7,6 +8,8 @@ import { pipeline } from "node:stream/promises";
 
 import File from "../models/file.model.js";
 import Directory from "../models/directory.model.js";
+
+import { adjustAncestorStats } from "./directory.service.js";
 
 import createByteCounter from "../utils/byteCounter.js";
 import { buildFilePath } from "../utils/storagePath.js";
@@ -74,29 +77,17 @@ const uploadFile = async (parentDirId, userId, fileName, fileStream) => {
 	}
 
 	const extension = path.extname(fileName);
-
-	const file = await File.create({
-		name: fileName,
-		extension,
-		size: 0,
-		parentDirId: parentDir._id,
-		userId,
-	});
-
-	const filePath = buildFilePath(file);
+	const fileId = new mongoose.Types.ObjectId();
+	const filePath = buildFilePath({ _id: fileId, extension });
 
 	// Count bytes mid-stream so we can both persist the size and enforce the cap
 	const counter = createByteCounter(MAX_UPLOAD_SIZE_BYTES);
 
-	// Stream file data to disk; pipeline handles backpressure and error propagation
+	// Stream to disk OUTSIDE the transaction — a non-retryable side effect.
 	try {
 		await pipeline(fileStream, counter.stream, createWriteStream(filePath));
 	} catch (error) {
-		// Roll back: remove the orphaned DB record and any partial file on disk
-		await Promise.allSettled([
-			File.deleteOne({ _id: file._id }),
-			rm(filePath, { force: true }),
-		]);
+		await rm(filePath, { force: true });
 
 		if (counter.state.tripped) {
 			throw new AppError(
@@ -113,8 +104,44 @@ const uploadFile = async (parentDirId, userId, fileName, fileStream) => {
 		);
 	}
 
-	file.size = counter.state.bytes;
-	await file.save();
+	const bytes = counter.state.bytes;
+	const mongooseSession = await mongoose.startSession();
+	let file;
+
+	try {
+		await mongooseSession.withTransaction(async () => {
+			const created = await File.create(
+				[
+					{
+						_id: fileId,
+						name: fileName,
+						extension,
+						size: bytes,
+						parentDirId: parentDir._id,
+						userId,
+					},
+				],
+				{ session: mongooseSession },
+			);
+			file = created[0];
+
+			await adjustAncestorStats(
+				parentDir._id,
+				{ bytes, files: 1 },
+				mongooseSession,
+			);
+		});
+	} catch (error) {
+		await rm(filePath, { force: true });
+		if (error instanceof AppError) throw error;
+		throw new AppError(
+			"Failed to upload file",
+			INTERNAL_SERVER_ERROR,
+			FILE_UPLOAD_FAILED,
+		);
+	} finally {
+		await mongooseSession.endSession();
+	}
 
 	return file;
 };
