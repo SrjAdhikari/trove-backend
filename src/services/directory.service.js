@@ -36,33 +36,26 @@ const getDirectory = async (directoryId, userId) => {
 		throw new AppError("Directory not found", NOT_FOUND, DIRECTORY_NOT_FOUND);
 	}
 
-	// Find files and immediate child folders directly inside directory.
-	// Get the recursive stats (file count + total size) for directory.
-	// Get the ordered ancestor chain (root → immediate parent).
-	const [files, childDirs, directoryStats, ancestors] = await Promise.all([
+	// Files and immediate child folders directly inside this directory,
+	// plus the ordered ancestor chain (root → immediate parent).
+	const [files, childDirs, ancestors] = await Promise.all([
 		File.find({ parentDirId: directory._id, userId }).lean(),
 		Directory.find({ parentDirId: directory._id, userId }).lean(),
-		getNestedSubtreeStats(directory._id, userId),
 		getAncestors(directory._id, userId),
 	]);
 
-	// Get the recursive stats (file count + total size) for each child folder.
-	const childDirectories = await Promise.all(
-		childDirs.map(async (dir) => {
-			const stats = await getNestedSubtreeStats(dir._id, userId);
-			return {
-				...dir,
-				id: dir._id,
-				fileCount: stats.fileCount,
-				totalSize: stats.totalSize,
-			};
-		}),
-	);
+	// Add `id` and `fileCount` + `totalSize` for each child directory
+	const childDirectories = childDirs.map((dir) => ({
+		...dir,
+		id: dir._id,
+		fileCount: dir.fileCount,
+		totalSize: dir.size,
+	}));
 
 	return {
 		...directory,
-		fileCount: directoryStats.fileCount,
-		totalSize: directoryStats.totalSize,
+		fileCount: directory.fileCount,
+		totalSize: directory.size,
 		ancestors,
 		files: files.map((file) => ({ ...file, id: file._id })),
 		childDirectories,

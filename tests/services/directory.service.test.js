@@ -3,7 +3,7 @@ import mongoose from "mongoose";
 import { Readable } from "node:stream";
 import { rm } from "node:fs/promises";
 
-import { adjustAncestorStats, deleteDirectory } from "../../src/services/directory.service.js";
+import { adjustAncestorStats, deleteDirectory, getDirectory } from "../../src/services/directory.service.js";
 import { uploadFile } from "../../src/services/file.service.js";
 import { buildFilePath } from "../../src/utils/storagePath.js";
 import Directory from "../../src/models/directory.model.js";
@@ -151,5 +151,56 @@ describe("deleteDirectory maintains ancestor sizes", () => {
 		await deleteDirectory(empty._id, user._id);
 
 		expect(await statsOf(root._id)).toEqual({ size: 0, fileCount: 0 });
+	});
+});
+
+describe("getDirectory reads stored sizes", () => {
+	it("returns stored totalSize/fileCount for the folder and each child", async () => {
+		const user = await createTestUser();
+		const root = await createTestDirectory(user._id);
+		const child = await createTestDirectory(user._id, { parentDirId: root._id });
+		const file = await uploadInto(child._id, user._id, "f.txt", "123"); // 3
+		await rm(buildFilePath(file), { force: true });
+
+		const data = await getDirectory(root._id, user._id);
+
+		expect(data.totalSize).toBe(3);
+		expect(data.fileCount).toBe(1);
+		const childView = data.childDirectories.find(
+			(d) => String(d.id) === String(child._id),
+		);
+		expect(childView.totalSize).toBe(3);
+		expect(childView.fileCount).toBe(1);
+	});
+
+	it("reports zeros and an empty child list for an empty folder (boundary)", async () => {
+		const user = await createTestUser();
+		const root = await createTestDirectory(user._id);
+
+		const data = await getDirectory(root._id, user._id);
+
+		expect(data.totalSize).toBe(0);
+		expect(data.fileCount).toBe(0);
+		expect(data.childDirectories).toEqual([]);
+	});
+
+	it("returns each child's own stored totals (multiple children)", async () => {
+		const user = await createTestUser();
+		const root = await createTestDirectory(user._id);
+		const c1 = await createTestDirectory(user._id, { parentDirId: root._id });
+		const c2 = await createTestDirectory(user._id, { parentDirId: root._id });
+		const f1 = await uploadInto(c1._id, user._id, "a.txt", "aaaa"); // 4
+		const f2 = await uploadInto(c2._id, user._id, "b.txt", "bb"); // 2
+		await rm(buildFilePath(f1), { force: true });
+		await rm(buildFilePath(f2), { force: true });
+
+		const data = await getDirectory(root._id, user._id);
+
+		const byId = Object.fromEntries(
+			data.childDirectories.map((d) => [String(d.id), d.totalSize]),
+		);
+		expect(byId[String(c1._id)]).toBe(4);
+		expect(byId[String(c2._id)]).toBe(2);
+		expect(data.totalSize).toBe(6); // root subtree total
 	});
 });
