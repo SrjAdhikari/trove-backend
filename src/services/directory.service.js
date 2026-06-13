@@ -253,33 +253,6 @@ const getAllNestedDirectories = async (directoryId, userId) => {
 };
 
 /**
- * Computes the total number of files and their cumulative size
- * within a directory and all of its subdirectories.
- *
- * @param {string} directoryId - The ID of the directory to start from
- * @param {string} userId - The ID of the authenticated user
- * @returns {Promise<{fileCount: number, totalSize: number}>}
- */
-const getNestedSubtreeStats = async (directoryId, userId) => {
-	const root = await getAllNestedDirectories(directoryId, userId);
-	if (!root) return { fileCount: 0, totalSize: 0 };
-
-	// Collect all directory IDs including nested ones
-	const allDirIds = [root._id, ...root.subDirectories.map((dir) => dir._id)];
-
-	// Fetch all files within these directories belonging to the user
-	const allFiles = await File.find({
-		parentDirId: { $in: allDirIds },
-		userId,
-	}).lean();
-
-	const fileCount = allFiles.length;
-	const totalSize = allFiles.reduce((sum, file) => sum + file.size, 0);
-
-	return { fileCount, totalSize };
-};
-
-/**
  * Walks parentDirId from startDirId up to the root and applies a size/fileCount
  * delta to that directory and every ancestor, atomically via $inc. Pass the
  * active transaction `session` so the walk + update join the caller's transaction.
