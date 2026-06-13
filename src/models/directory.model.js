@@ -22,6 +22,16 @@ const directorySchema = new Schema(
 			ref: "User",
 			required: true,
 		},
+		size: {
+			type: Number,
+			required: true,
+			default: 0,
+		},
+		fileCount: {
+			type: Number,
+			required: true,
+			default: 0,
+		},
 	},
 	{
 		strict: "throw",

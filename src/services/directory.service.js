@@ -36,33 +36,26 @@ const getDirectory = async (directoryId, userId) => {
 		throw new AppError("Directory not found", NOT_FOUND, DIRECTORY_NOT_FOUND);
 	}
 
-	// Find files and immediate child folders directly inside directory.
-	// Get the recursive stats (file count + total size) for directory.
-	// Get the ordered ancestor chain (root → immediate parent).
-	const [files, childDirs, directoryStats, ancestors] = await Promise.all([
+	// Files and immediate child folders directly inside this directory,
+	// plus the ordered ancestor chain (root → immediate parent).
+	const [files, childDirs, ancestors] = await Promise.all([
 		File.find({ parentDirId: directory._id, userId }).lean(),
 		Directory.find({ parentDirId: directory._id, userId }).lean(),
-		getNestedSubtreeStats(directory._id, userId),
 		getAncestors(directory._id, userId),
 	]);
 
-	// Get the recursive stats (file count + total size) for each child folder.
-	const childDirectories = await Promise.all(
-		childDirs.map(async (dir) => {
-			const stats = await getNestedSubtreeStats(dir._id, userId);
-			return {
-				...dir,
-				id: dir._id,
-				fileCount: stats.fileCount,
-				totalSize: stats.totalSize,
-			};
-		}),
-	);
+	// Expose the stored subtree size as `totalSize`; drop the raw `size` field
+	// from the response so the contract stays totalSize/fileCount only.
+	const childDirectories = childDirs.map(({ size, ...dir }) => ({
+		...dir,
+		id: dir._id,
+		totalSize: size,
+	}));
 
+	const { size, ...directoryView } = directory;
 	return {
-		...directory,
-		fileCount: directoryStats.fileCount,
-		totalSize: directoryStats.totalSize,
+		...directoryView,
+		totalSize: size,
 		ancestors,
 		files: files.map((file) => ({ ...file, id: file._id })),
 		childDirectories,
@@ -194,6 +187,13 @@ const deleteDirectory = async (directoryId, userId) => {
 				{ _id: { $in: allDirIds }, userId },
 				{ session },
 			);
+
+			// Subtract the deleted subtree's totals from every ancestor above it.
+			await adjustAncestorStats(
+				rootDir.parentDirId,
+				{ bytes: -rootDir.size, files: -rootDir.fileCount },
+				session,
+			);
 		});
 	} finally {
 		session.endSession();
@@ -253,30 +253,35 @@ const getAllNestedDirectories = async (directoryId, userId) => {
 };
 
 /**
- * Computes the total number of files and their cumulative size
- * within a directory and all of its subdirectories.
+ * Walks parentDirId from startDirId up to the root and applies a size/fileCount
+ * delta to that directory and every ancestor, atomically via $inc. Pass the
+ * active transaction `session` so the walk + update join the caller's transaction.
  *
- * @param {string} directoryId - The ID of the directory to start from
- * @param {string} userId - The ID of the authenticated user
- * @returns {Promise<{fileCount: number, totalSize: number}>}
+ * @param {import("mongoose").Types.ObjectId|string} startDirId
+ * @param {{ bytes: number, files: number }} delta
+ * @param {import("mongoose").ClientSession} [session]
  */
-const getNestedSubtreeStats = async (directoryId, userId) => {
-	const root = await getAllNestedDirectories(directoryId, userId);
-	if (!root) return { fileCount: 0, totalSize: 0 };
+const adjustAncestorStats = async (startDirId, { bytes, files }, session) => {
+	const ancestorDirIds = [];
+	let currentDirId = startDirId;
 
-	// Collect all directory IDs including nested ones
-	const allDirIds = [root._id, ...root.subDirectories.map((dir) => dir._id)];
+	while (currentDirId) {
+		// Project to parentDirId only because we only need _id and parentDirId for the walk
+		const currentDir = await Directory.findById(currentDirId, "parentDirId", {
+			session,
+		});
+		if (!currentDir) break;
+		ancestorDirIds.push(currentDir._id);
+		currentDirId = currentDir.parentDirId;
+	}
 
-	// Fetch all files within these directories belonging to the user
-	const allFiles = await File.find({
-		parentDirId: { $in: allDirIds },
-		userId,
-	}).lean();
+	if (ancestorDirIds.length === 0) return;
 
-	const fileCount = allFiles.length;
-	const totalSize = allFiles.reduce((sum, file) => sum + file.size, 0);
-
-	return { fileCount, totalSize };
+	await Directory.updateMany(
+		{ _id: { $in: ancestorDirIds } },
+		{ $inc: { size: bytes, fileCount: files } },
+		{ session },
+	);
 };
 
 /**
@@ -321,4 +326,10 @@ const getAncestors = async (directoryId, userId) => {
 		.map((ancestor) => ({ _id: ancestor._id, name: ancestor.name }));
 };
 
-export { getDirectory, createDirectory, updateDirectory, deleteDirectory };
+export {
+	getDirectory,
+	createDirectory,
+	updateDirectory,
+	deleteDirectory,
+	adjustAncestorStats,
+};
