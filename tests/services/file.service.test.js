@@ -186,3 +186,53 @@ describe("uploadFile maintains folder sizes", () => {
 		expect(await dirStats(root._id)).toEqual({ size: 0, fileCount: 0 });
 	});
 });
+
+describe("deleteFile maintains folder sizes", () => {
+	it("decrements the folder and ancestors back to zero on the last file", async () => {
+		const user = await createTestUser();
+		const root = await createTestDirectory(user._id);
+		const sub = await createTestDirectory(user._id, { parentDirId: root._id });
+		const file = await upload(sub._id, user._id, "note.txt", "hello world"); // 11
+
+		await deleteFile(file._id, user._id);
+
+		expect(await dirStats(sub._id)).toEqual({ size: 0, fileCount: 0 });
+		expect(await dirStats(root._id)).toEqual({ size: 0, fileCount: 0 });
+	});
+
+	it("removes only the deleted file's contribution (isolation)", async () => {
+		const user = await createTestUser();
+		const root = await createTestDirectory(user._id);
+		const f1 = await upload(root._id, user._id, "a.txt", "aaa"); // 3
+		await upload(root._id, user._id, "b.txt", "bbbb"); // 4
+
+		await deleteFile(f1._id, user._id);
+
+		expect(await dirStats(root._id)).toEqual({ size: 4, fileCount: 1 });
+	});
+
+	it("decrements every ancestor for a nested file (depth)", async () => {
+		const user = await createTestUser();
+		const root = await createTestDirectory(user._id);
+		const sub = await createTestDirectory(user._id, { parentDirId: root._id });
+		const file = await upload(sub._id, user._id, "n.txt", "12345"); // 5
+
+		await deleteFile(file._id, user._id);
+
+		expect(await dirStats(sub._id)).toEqual({ size: 0, fileCount: 0 });
+		expect(await dirStats(root._id)).toEqual({ size: 0, fileCount: 0 });
+	});
+
+	it("leaves sizes unchanged when a non-owner attempts delete (security)", async () => {
+		const owner = await createTestUser();
+		const attacker = await createTestUser();
+		const root = await createTestDirectory(owner._id);
+		const file = await upload(root._id, owner._id, "a.txt", "aaa"); // 3
+
+		await expect(deleteFile(file._id, attacker._id)).rejects.toMatchObject({
+			code: "FILE_NOT_FOUND",
+		});
+
+		expect(await dirStats(root._id)).toEqual({ size: 3, fileCount: 1 });
+	});
+});

@@ -178,10 +178,7 @@ const updateFile = async (fileId, newFileName, userId) => {
  * @throws {AppError} If the file does not exist or the user does not own it
  */
 const deleteFile = async (fileId, userId) => {
-	const file = await File.findOne({
-		_id: fileId,
-		userId,
-	}).lean();
+	const file = await File.findOne({ _id: fileId, userId }).lean();
 
 	if (!file) {
 		throw new AppError("File not found", NOT_FOUND, FILE_NOT_FOUND);
@@ -189,11 +186,25 @@ const deleteFile = async (fileId, userId) => {
 
 	const filePath = buildFilePath(file);
 
-	// Delete DB record and physical file in parallel
-	await Promise.all([
-		File.deleteOne({ _id: fileId, userId }),
-		rm(filePath, { force: true }),
-	]);
+	const mongooseSession = await mongoose.startSession();
+	try {
+		await mongooseSession.withTransaction(async () => {
+			await File.deleteOne(
+				{ _id: fileId, userId },
+				{ session: mongooseSession },
+			);
+			await adjustAncestorStats(
+				file.parentDirId,
+				{ bytes: -file.size, files: -1 },
+				mongooseSession,
+			);
+		});
+	} finally {
+		await mongooseSession.endSession();
+	}
+
+	// Physical file removed outside the transaction — non-retryable side effect.
+	await rm(filePath, { force: true });
 
 	return file;
 };
