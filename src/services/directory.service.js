@@ -280,6 +280,38 @@ const getNestedSubtreeStats = async (directoryId, userId) => {
 };
 
 /**
+ * Walks parentDirId from startDirId up to the root and applies a size/fileCount
+ * delta to that directory and every ancestor, atomically via $inc. Pass the
+ * active transaction `session` so the walk + update join the caller's transaction.
+ *
+ * @param {import("mongoose").Types.ObjectId|string} startDirId
+ * @param {{ bytes: number, files: number }} delta
+ * @param {import("mongoose").ClientSession} [session]
+ */
+const adjustAncestorStats = async (startDirId, { bytes, files }, session) => {
+	const ancestorDirIds = [];
+	let currentDirId = startDirId;
+
+	while (currentDirId) {
+		// Project to parentDirId only because we only need _id and parentDirId for the walk
+		const currentDir = await Directory.findById(currentDirId, "parentDirId", {
+			session,
+		});
+		if (!currentDir) break;
+		ancestorDirIds.push(currentDir._id);
+		currentDirId = currentDir.parentDirId;
+	}
+
+	if (ancestorDirIds.length === 0) return;
+
+	await Directory.updateMany(
+		{ _id: { $in: ancestorDirIds } },
+		{ $inc: { size: bytes, fileCount: files } },
+		{ session },
+	);
+};
+
+/**
  * Returns the ordered ancestor list from root to immediate parent.
  * Returns [] when the directory is the root.
  *
@@ -321,4 +353,10 @@ const getAncestors = async (directoryId, userId) => {
 		.map((ancestor) => ({ _id: ancestor._id, name: ancestor.name }));
 };
 
-export { getDirectory, createDirectory, updateDirectory, deleteDirectory };
+export {
+	getDirectory,
+	createDirectory,
+	updateDirectory,
+	deleteDirectory,
+	adjustAncestorStats,
+};
