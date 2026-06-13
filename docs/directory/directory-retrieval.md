@@ -31,14 +31,13 @@ The Directory retrieval logic adheres to the Controller-Service pattern, with au
 - **Service Logic (`getDirectory`):**
   1. Queries `Directory.findOne({ _id: directoryId, userId })` to fetch the target directory with ownership verification.
   2. If no document matches, throws `AppError` with `NOT_FOUND` and `DIRECTORY_NOT_FOUND`.
-  3. **Concurrent batch (4-way `Promise.all`):**
+  3. **Concurrent batch (3-way `Promise.all`):**
      - `File.find({ parentDirId, userId })` — files directly inside the requested directory.
-     - `Directory.find({ parentDirId, userId })` — immediate child folders.
-     - `getNestedSubtreeStats(directoryId, userId)` — recursive `fileCount` + `totalSize` for the requested directory's full subtree.
+     - `Directory.find({ parentDirId, userId })` — immediate child folders (each carries its own stored `size`/`fileCount`).
      - `getAncestors(directoryId, userId)` — ordered ancestor chain from root to the directory's immediate parent.
-  4. **Per-child stats fanout:** For each immediate child folder, calls `getNestedSubtreeStats(childId, userId)` in parallel via `Promise.all` over `childDirs.map(...)` so each card on the listing carries its own recursive `fileCount` + `totalSize`.
-  5. **Defense-in-Depth:** Every query (top-level + helpers + per-child) includes `userId` as a filter. Even though the parent directory is ownership-verified, this guards against data leaks from orphaned documents and from any future bug in move/copy operations.
-  6. Returns a unified object: `{ ...directory, fileCount, totalSize, ancestors, files, childDirectories }`.
+  4. **Stored subtree stats (no aggregation):** The requested directory's `size`/`fileCount` are read straight off its document, and each child folder's totals are read from its own stored `size`/`fileCount` in a synchronous `.map` — no per-child DB fanout. These fields are maintained on write (see below), so listings no longer recompute them (PR #62).
+  5. **Defense-in-Depth:** Every query includes `userId` as a filter. Even though the parent directory is ownership-verified, this guards against data leaks from orphaned documents and from any future bug in move/copy operations.
+  6. Returns a unified object: `{ ...directory, totalSize, fileCount, ancestors, files, childDirectories }`. The stored `size` is surfaced as `totalSize` (and the raw `size` key dropped) so the response contract stays `totalSize`/`fileCount` — unchanged from before the denormalization.
 
 - **Response:**
   ```json
@@ -91,16 +90,17 @@ The Directory retrieval logic adheres to the Controller-Service pattern, with au
 
 ---
 
-## 🔢 Recursive Stats (`getNestedSubtreeStats`)
+## 🔢 Subtree Stats (denormalized `size` / `fileCount`)
 
-Computes `fileCount` and `totalSize` for a directory and every descendant folder, in two DB round-trips:
+`fileCount` and `totalSize` for a directory's whole subtree are **stored on the Directory document** (as `fileCount` and `size`) and read directly — no aggregation, no per-child fanout. As of PR #62 the listing does zero extra work for stats.
 
-1. `getAllNestedDirectories(directoryId, userId)` — runs the same `$match` + `$graphLookup` aggregation used by `deleteDirectory` to flatten the subtree (target directory + every nested subdirectory) in one query.
-2. `File.find({ parentDirId: { $in: allDirIds }, userId }).lean()` — one query for every file inside any directory in the flattened subtree.
+The counters are **maintained on write, inside the same transaction as the file/directory change**, by `adjustAncestorStats(startDirId, { bytes, files }, session)` in `directory.service.js`, which walks the `parentDirId` chain from the changed directory up to the root and `$inc`s `size`/`fileCount` on every ancestor:
 
-Then in JS: `fileCount = files.length`, `totalSize = files.reduce(sum, file => sum + file.size, 0)`.
+- `uploadFile` → `+bytes, +1` on the parent chain.
+- `deleteFile` → `-bytes, -1`.
+- `deleteDirectory` → subtracts the deleted subtree's stored totals from the ancestor chain.
 
-Stats are **computed on read** — no `fileCount`/`totalSize` field is persisted on the Directory document. This keeps writes cheap (a file upload does not have to walk up the tree updating ancestor counters) at the cost of doing the recursive count on every listing. Acceptable trade-off until a single subtree exceeds ~100k files; revisit with stored counters then.
+This inverts the earlier trade-off: writes now do a bounded walk up the tree, but reads are O(1) field lookups regardless of subtree size. See `../architecture/transaction-patterns.md` for the transactional shape and retry-safety, and `../architecture/database-schema.md` for the Atlas `minimum: 0` underflow guard (the Mongoose model deliberately has no `min`, since `$inc` skips validators).
 
 ## 🧭 Ancestor Chain (`getAncestors`)
 
@@ -122,21 +122,17 @@ All read queries append `.lean()`, which returns plain JavaScript objects instea
 
 ### 2. Concurrent Top-Level Batch
 
-The four operations at the top of `getDirectory` (direct files, direct children, recursive stats, ancestors) run in parallel via `Promise.all`. Wall-clock latency is dominated by the slowest single path, not the sum.
+The three operations at the top of `getDirectory` (direct files, direct children, ancestors) run in parallel via `Promise.all`. Wall-clock latency is dominated by the slowest single path, not the sum. (Before PR #62 this was a 4-way batch that also recomputed subtree stats; those are now stored, so that query is gone.)
 
-### 3. Per-Child Stats Fanout
+### 3. Constant Query Count (no per-child fanout)
 
-Each immediate child folder gets its own `getNestedSubtreeStats` call (2 DB queries) so its card carries its own recursive `fileCount` + `totalSize`. These run concurrently via `Promise.all` over `childDirs.map(...)`.
-
-Total query count for a listing with N direct children is `2N + 6`:
+Each child folder's `fileCount`/`totalSize` is read from its own stored fields in the `Directory.find` result — no per-child query. Total query count for a listing is a **constant 4**, independent of the number of children N:
 - 1 — top-level `Directory.findOne`
 - 1 — direct files (`File.find`)
-- 1 — direct children (`Directory.find`)
-- 2 — `getNestedSubtreeStats` for the requested directory (graphLookup + File.find)
+- 1 — direct children (`Directory.find`) — each carries its stored stats
 - 1 — `getAncestors` (single aggregate)
-- 2N — `getNestedSubtreeStats` per child folder
 
-Wall time is roughly one round-trip of work because everything fans out in parallel and Mongo's default connection pool of 100 covers typical N. A folder with 1000+ direct children would queue queries — flagged for a future `p-limit` cap or pagination.
+Before PR #62 this was `2N + 6` — a `getNestedSubtreeStats` fanout of 2 queries per child that queued under the connection pool for folders with 1000+ children. That fanout, and the `p-limit`/pagination follow-up it would have needed, is gone; only the unbounded `.find()` result-size concern (below) remains.
 
 ### 4. Compound Indexes
 
