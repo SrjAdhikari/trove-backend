@@ -24,9 +24,10 @@ const {
 	DIRECTORY_NOT_FOUND,
 	FILE_UPLOAD_FAILED,
 	FILE_TOO_LARGE,
+	STORAGE_LIMIT_EXCEEDED,
 } = appErrorCode;
 
-const MAX_UPLOAD_SIZE_BYTES = 100 * 1000 * 1000;
+const MAX_FILE_UPLOAD_SIZE = 100 * 1000 * 1000;
 
 /**
  * Retrieves a file document and its physical storage path.
@@ -59,10 +60,17 @@ const getFile = async (fileId, userId) => {
  * @param {string} userId - The ID of the authenticated user to verify ownership
  * @param {string} fileName - The original filename provided by the user
  * @param {import("node:stream").Readable} fileStream - The readable stream of file data
+ * @param {number} totalStorageLimit - The user's quota in bytes (from req.user)
  * @returns {Promise<Object>} The newly created file document
- * @throws {AppError} If the parent directory is not found or file write fails
+ * @throws {AppError} If the parent directory is not found, the quota is exceeded, or the file write fails
  */
-const uploadFile = async (parentDirId, userId, fileName, fileStream) => {
+const uploadFile = async (
+	parentDirId,
+	userId,
+	fileName,
+	fileStream,
+	totalStorageLimit,
+) => {
 	const parentDir = await Directory.findOne({
 		_id: parentDirId,
 		userId,
@@ -81,7 +89,7 @@ const uploadFile = async (parentDirId, userId, fileName, fileStream) => {
 	const filePath = buildFilePath({ _id: fileId, extension });
 
 	// Count bytes mid-stream so we can both persist the size and enforce the cap
-	const counter = createByteCounter(MAX_UPLOAD_SIZE_BYTES);
+	const counter = createByteCounter(MAX_FILE_UPLOAD_SIZE);
 
 	// Stream to disk OUTSIDE the transaction — a non-retryable side effect.
 	try {
@@ -110,6 +118,22 @@ const uploadFile = async (parentDirId, userId, fileName, fileStream) => {
 
 	try {
 		await mongooseSession.withTransaction(async () => {
+			// Check inside the transaction: the $inc below makes concurrent
+			// uploads conflict and retry, so they can't both pass the quota.
+			const rootDir = await Directory.findOne(
+				{ userId, parentDirId: null },
+				"size",
+				{ session: mongooseSession },
+			);
+			const usedBytes = rootDir?.size ?? 0;
+			if (usedBytes + bytes > totalStorageLimit) {
+				throw new AppError(
+					"Storage limit exceeded",
+					BAD_REQUEST,
+					STORAGE_LIMIT_EXCEEDED,
+				);
+			}
+
 			const created = await File.create(
 				[
 					{
