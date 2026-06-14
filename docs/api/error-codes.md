@@ -1,6 +1,6 @@
 # Error Codes
 
-> **Status:** As-of 2026-06-07. This document is a glossary that drifts as the codebase evolves — refresh it when adding or removing codes from `src/constants/appErrorCode.js`.
+> **Status:** As-of 2026-06-14. This document is a glossary that drifts as the codebase evolves — refresh it when adding or removing codes from `src/constants/appErrorCode.js`.
 
 The TroveCloud backend returns structured errors with stable, machine-readable codes. The frontend consumes these codes to drive UI behavior (which form to redirect to, which message to show, when to retry). This document is the contract: the source of truth for what each code means and where it's thrown.
 
@@ -81,6 +81,7 @@ Returned by the admin subsystem (`/api/admin/*`). The route gate (`requireRole` 
 | `FILE_RENAME_FAILED` | 500          | Mongoose update failed after the user passed authorization checks.                                      | `updateFile` in `file.service.js`     |
 | `FILE_TOO_LARGE`     | 400          | Upload exceeded the 100 MB per-file cap. Triggered mid-stream by the byte counter; both DB row and partial disk file are rolled back. | `uploadFile` in `file.service.js`     |
 | `FILE_UPLOAD_FAILED` | 500          | Stream pipeline to disk failed after the DB row was created — both DB and partial file get rolled back. | `uploadFile` in `file.service.js`     |
+| `STORAGE_LIMIT_EXCEEDED` | 400      | Upload would push the user's total stored bytes past their `storageLimit` quota. Checked inside the upload transaction against the denormalized root-directory size; both DB row and partial disk file are rolled back. | `uploadFile` in `file.service.js`     |
 
 ### Directory
 

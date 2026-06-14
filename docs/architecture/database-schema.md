@@ -1,6 +1,6 @@
 # Database Schema
 
-> **Status:** As-built (2026-06-13). Mirrors `src/models/*` and `src/schemas/*`. Refresh when a model is added, a field is renamed, or an index changes.
+> **Status:** As-built (2026-06-14). Mirrors `src/models/*` and `src/schemas/*`. Refresh when a model is added, a field is renamed, or an index changes.
 
 The TroveCloud backend runs on MongoDB via Mongoose. This doc is a single place to look up every collection, its fields, its indexes, and how the collections link to each other. The code in `src/models/` is the source of truth — if this document ever drifts from the models, the models win.
 
@@ -41,6 +41,7 @@ Source: `src/models/user.model.js`. Atlas mirror: `src/schemas/user.schema.js`.
 | `email`                 | String   | yes                       | —         | `trim`, `lowercase`, unique index, regex-validated            |
 | `password`              | String   | only if `provider=email`  | —         | `minlength: 8`, `select: false`, bcrypt-hashed pre-save       |
 | `rootDirId`             | ObjectId | no                        | —         | Set during `verifyOTP` (email path) or OAuth new-user branch  |
+| `storageLimit`          | Number   | yes                       | `1 GB`    | Per-user storage quota in bytes (`1 * 1000 * 1000 * 1000`). **Not** in the Atlas validator's `required` array — the Mongoose default guarantees presence on every ORM write, and listing it would reject pre-field docs. Enforced on upload (PR #66); see `../file/file-upload.md` |
 | `profilePicture`        | String   | no                        | `null`    | Populated from OAuth profile; nullable in both Mongoose+Atlas |
 | `provider`              | String   | yes                       | `"email"` | Enum `["email", "google", "github"]`. Immutable via pre-save  |
 | `otp`                   | String   | no                        | —         | `select: false`, hashed                                       |

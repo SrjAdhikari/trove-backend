@@ -13,6 +13,7 @@ Please navigate to the specific domain you need below:
 - [`drive-import.md`](./architecture/drive-import.md) - As-built design for the Google Drive import feature (`POST /api/drive/import`).
 - [`rbac-admin.md`](./architecture/rbac-admin.md) - RBAC + admin subsystem (`/api/admin/*`): roles, lifecycle fields, authorize middleware, mutation cascades.
 - [`profile-picture-upload.md`](./architecture/profile-picture-upload.md) - As-built design for profile-picture upload + public capability-URL serving (`POST` / `GET /api/users/profile-picture`).
+- [`storage-quota.md`](./architecture/storage-quota.md) - Per-user storage quota + usage breakdown endpoint (`GET /api/storage/usage`) and quota enforcement on upload.
 
 ### 📂 [Authentication](./authentication)
 
