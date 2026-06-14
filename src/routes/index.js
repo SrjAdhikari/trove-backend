@@ -11,6 +11,7 @@ import userRouter from "./user.routes.js";
 import directoryRouter from "./directory.routes.js";
 import fileRouter from "./file.routes.js";
 import driveRouter from "./drive.routes.js";
+import storageRouter from "./storage.routes.js";
 import adminRouter from "./admin/index.js";
 
 const router = Router();
@@ -44,6 +45,12 @@ router.use("/files", fileRouter);
  * @route /api/drive
  */
 router.use("/drive", driveRouter);
+
+/**
+ * Storage routes
+ * @route /api/storage
+ */
+router.use("/storage", storageRouter);
 
 /**
  * Admin routes
