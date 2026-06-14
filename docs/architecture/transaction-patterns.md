@@ -1,6 +1,6 @@
 # Transaction Patterns
 
-> **Status:** As-built (2026-06-13). Documents the MongoDB transaction usage adopted in PRs #11 (Google OAuth), #14 (shared OAuth helper), #25 (password reset), #33 (admin suspend / soft-delete / hard-delete), and #62 (denormalized folder-size maintenance). Used in `verifyOTP` since the original auth implementation.
+> **Status:** As-built (2026-06-14). Documents the MongoDB transaction usage adopted in PRs #11 (Google OAuth), #14 (shared OAuth helper), #25 (password reset), #33 (admin suspend / soft-delete / hard-delete), #62 (denormalized folder-size maintenance), and #66 (per-user storage-quota check on upload). Used in `verifyOTP` since the original auth implementation.
 
 Captures a subtle pattern that recurs across the codebase: when a flow needs to **atomically commit two or more cross-document writes** (User + Directory creation, User update + Session wipe, multi-collection user purge, a file write + its ancestor folder-counter updates), the database writes happen inside a `withTransaction` block. Where a flow also issues a `Session`, that **`Session.create` happens outside the transaction**. Where a flow also performs non-idempotent side effects on disk, **those happen outside the transaction too**. This document explains why, and what to do if a new call site needs the same shape.
 
@@ -174,7 +174,7 @@ A few details worth knowing if you're new to MongoDB transactions in Mongoose:
 - `src/services/admin/user.service.js` — `softDeleteUser` (since PR #33; deletedAt + session wipe atomic)
 - `src/services/admin/user.service.js` — `hardDeleteUser` (since PR #33; multi-collection wipe inside the transaction, disk-file cleanup outside via `Promise.allSettled`)
 - `src/services/directory.service.js` — recursive directory delete (separate pattern; transaction wraps DB deletes + an `adjustAncestorStats` ancestor decrement since PR #62, physical-file cleanup happens outside via `Promise.allSettled`)
-- `src/services/file.service.js` — `uploadFile` and `deleteFile` (since PR #62; a `File` create/delete plus an `adjustAncestorStats` ancestor `$inc` inside the transaction, with disk I/O kept outside — stream-before on upload, `rm`-after on delete)
+- `src/services/file.service.js` — `uploadFile` and `deleteFile` (since PR #62; a `File` create/delete plus an `adjustAncestorStats` ancestor `$inc` inside the transaction, with disk I/O kept outside — stream-before on upload, `rm`-after on delete). Since PR #66, `uploadFile` also reads the root-directory `size` and enforces the per-user storage quota inside the same transaction — because that quota read shares the root doc the ancestor `$inc` writes, two concurrent uploads write-conflict on it and `withTransaction` retries the loser against the fresh size, so the cap holds without an explicit lock.
 
 ### Deployment requirement
 
