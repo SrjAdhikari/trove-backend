@@ -5,7 +5,9 @@ import bcrypt from "bcrypt";
 
 import { ROLES } from "../constants/roles.js";
 
+const DEFAULT_STORAGE_LIMIT = 1 * 1000 * 1000 * 1000;
 const { Schema, model } = mongoose;
+
 const userSchema = new Schema(
 	{
 		name: {
@@ -33,6 +35,11 @@ const userSchema = new Schema(
 		rootDirId: {
 			type: Schema.Types.ObjectId,
 			ref: "Directory",
+		},
+		storageLimit: {
+			type: Number,
+			required: true,
+			default: DEFAULT_STORAGE_LIMIT,
 		},
 		profilePicture: {
 			type: String,

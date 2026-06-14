@@ -86,8 +86,14 @@ const dirStats = async (id) => {
 	return { size: d.size, fileCount: d.fileCount };
 };
 
-const upload = async (parentId, userId, name, body) => {
-	const file = await uploadFile(parentId, userId, name, Readable.from(Buffer.from(body)));
+const upload = async (parentId, userId, name, body, storageLimit) => {
+	const file = await uploadFile(
+		parentId,
+		userId,
+		name,
+		Readable.from(Buffer.from(body)),
+		storageLimit,
+	);
 	createdPaths.add(buildFilePath(file));
 	return file;
 };
@@ -184,6 +190,83 @@ describe("uploadFile maintains folder sizes", () => {
 		expect(await File.countDocuments({})).toBe(0);
 		expect(await dirStats(sub._id)).toEqual({ size: 0, fileCount: 0 });
 		expect(await dirStats(root._id)).toEqual({ size: 0, fileCount: 0 });
+	});
+});
+
+describe("uploadFile enforces per-user storage quota", () => {
+	it("rejects an upload that would exceed the user's remaining quota", async () => {
+		const user = await createTestUser({ storageLimit: 5 });
+		const root = await createTestDirectory(user._id); // parentDirId: null → root
+
+		await expect(
+			uploadFile(
+				root._id,
+				user._id,
+				"big.txt",
+				Readable.from(Buffer.from("123456")), // 6 bytes
+				user.storageLimit,
+			),
+		).rejects.toMatchObject({ code: "STORAGE_LIMIT_EXCEEDED", statusCode: 400 });
+
+		expect(await File.countDocuments({})).toBe(0);
+		expect(await dirStats(root._id)).toEqual({ size: 0, fileCount: 0 });
+	});
+
+	it("allows an upload that exactly fills the quota (boundary)", async () => {
+		const user = await createTestUser({ storageLimit: 6 });
+		const root = await createTestDirectory(user._id);
+
+		const file = await upload(root._id, user._id, "fit.txt", "123456", user.storageLimit); // 6 bytes
+
+		expect(file.size).toBe(6);
+		expect(await dirStats(root._id)).toEqual({ size: 6, fileCount: 1 });
+	});
+
+	it("checks against live usage from prior uploads, not just the new file", async () => {
+		const user = await createTestUser({ storageLimit: 10 });
+		const root = await createTestDirectory(user._id);
+
+		await upload(root._id, user._id, "a.txt", "12345", user.storageLimit); // 5 bytes → used 5
+
+		await expect(
+			uploadFile(
+				root._id,
+				user._id,
+				"b.txt",
+				Readable.from(Buffer.from("123456")), // +6 → 11 > 10
+				user.storageLimit,
+			),
+		).rejects.toMatchObject({ code: "STORAGE_LIMIT_EXCEEDED" });
+
+		expect(await File.countDocuments({})).toBe(1);
+		expect(await dirStats(root._id)).toEqual({ size: 5, fileCount: 1 });
+	});
+
+	it("rejects a new upload when the quota is already full", async () => {
+		const user = await createTestUser({ storageLimit: 5 });
+		const root = await createTestDirectory(user._id, { size: 5, fileCount: 1 });
+
+		await expect(
+			uploadFile(
+				root._id,
+				user._id,
+				"x.txt",
+				Readable.from(Buffer.from("x")), // 1 byte
+				user.storageLimit,
+			),
+		).rejects.toMatchObject({ code: "STORAGE_LIMIT_EXCEEDED" });
+
+		expect(await dirStats(root._id)).toEqual({ size: 5, fileCount: 1 });
+	});
+
+	it("allows a 0-byte upload even at exactly full quota (boundary)", async () => {
+		const user = await createTestUser({ storageLimit: 5 });
+		const root = await createTestDirectory(user._id, { size: 5, fileCount: 1 });
+
+		const file = await upload(root._id, user._id, "empty.txt", "", user.storageLimit); // 0 bytes
+
+		expect(file.size).toBe(0);
+		expect(await dirStats(root._id)).toEqual({ size: 5, fileCount: 2 });
 	});
 });
 

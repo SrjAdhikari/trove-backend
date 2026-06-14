@@ -47,7 +47,13 @@ const uploadFileHandler = async (req, res) => {
 	// here to prevent header injection or directory traversal
 	fileName = sanitizeFileName(fileName) || "untitled";
 
-	const file = await uploadFile(parentDirId, user._id, fileName, req);
+	const file = await uploadFile(
+		parentDirId,
+		user._id,
+		fileName,
+		req,
+		user.storageLimit,
+	);
 
 	return res.status(CREATED).json({
 		success: true,

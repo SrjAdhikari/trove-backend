@@ -45,6 +45,11 @@ export const createTestUser = async (overrides = {}) => {
 		doc.password = overrides.password ?? "TestPass123";
 	}
 
+	// Only set when overridden so the schema default (1 GB) otherwise applies.
+	if (overrides.storageLimit !== undefined) {
+		doc.storageLimit = overrides.storageLimit;
+	}
+
 	return User.create(doc);
 };
 
@@ -56,6 +61,8 @@ export const createTestDirectory = async (userId, overrides = {}) =>
 		name: overrides.name ?? `dir-${nextId()}`,
 		userId,
 		parentDirId: overrides.parentDirId ?? null,
+		size: overrides.size ?? 0,
+		fileCount: overrides.fileCount ?? 0,
 	});
 
 export const createTestFile = async (userId, parentDirId, overrides = {}) =>

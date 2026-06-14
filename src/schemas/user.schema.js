@@ -29,6 +29,10 @@ const userSchema = {
 				bsonType: "objectId",
 				description: "rootDirId must be a valid ObjectId",
 			},
+			storageLimit: {
+				bsonType: "number",
+				description: "Per-user storage quota in bytes",
+			},
 			profilePicture: {
 				bsonType: ["string", "null"],
 				description: "Profile picture URL, or null if not yet set",
