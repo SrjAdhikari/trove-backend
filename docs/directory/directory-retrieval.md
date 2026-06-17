@@ -34,10 +34,10 @@ The Directory retrieval logic adheres to the Controller-Service pattern, with au
   3. **Concurrent batch (3-way `Promise.all`):**
      - `File.find({ parentDirId, userId })` — files directly inside the requested directory.
      - `Directory.find({ parentDirId, userId })` — immediate child folders (each carries its own stored `size`/`fileCount`).
-     - `getAncestors(directoryId, userId)` — ordered ancestor chain from root to the directory's immediate parent.
+     - `resolveDirectoryNames(directory.ancestorIds, userId)` — resolves the directory's stored ancestor IDs (root → immediate parent) into `{ _id, name }` via a single indexed `$in` (no aggregation).
   4. **Stored subtree stats (no aggregation):** The requested directory's `size`/`fileCount` are read straight off its document, and each child folder's totals are read from its own stored `size`/`fileCount` in a synchronous `.map` — no per-child DB fanout. These fields are maintained on write (see below), so listings no longer recompute them (PR #62).
   5. **Defense-in-Depth:** Every query includes `userId` as a filter. Even though the parent directory is ownership-verified, this guards against data leaks from orphaned documents and from any future bug in move/copy operations.
-  6. Returns a unified object: `{ ...directory, totalSize, fileCount, ancestors, files, childDirectories }`. The stored `size` is surfaced as `totalSize` (and the raw `size` key dropped) so the response contract stays `totalSize`/`fileCount` — unchanged from before the denormalization.
+  6. Builds a self-inclusive `breadcrumb` (root → current folder) from the resolved ancestors via `generateBreadCrumb`, and a `path` display string via `generatePath`. Returns a unified object: `{ ...directory, totalSize, fileCount, breadcrumb, path, files, childDirectories }`. The stored `size` is surfaced as `totalSize`; the raw `size` and the internal `ancestorIds` are dropped (top-level and on each child).
 
 - **Response:**
   ```json
@@ -53,9 +53,11 @@ The Directory retrieval logic adheres to the Controller-Service pattern, with au
       "updatedAt": "...",
       "fileCount": 142,
       "totalSize": 1234567890,
-      "ancestors": [
-        { "_id": "root-dir-id", "name": "My Files" }
+      "breadcrumb": [
+        { "_id": "root-dir-id", "name": "My Files" },
+        { "_id": "...", "name": "Documents" }
       ],
+      "path": "/My Files/Documents",
       "files": [
         {
           "_id": "...",
@@ -86,7 +88,7 @@ The Directory retrieval logic adheres to the Controller-Service pattern, with au
   }
   ```
 
-  - `fileCount` / `totalSize` on the top-level directory cover **the whole subtree** (every file under it, recursively). Also present on each `childDirectories[]` entry, scoped to that child's own subtree. `ancestors` is empty `[]` when viewing root.
+  - `fileCount` / `totalSize` on the top-level directory cover **the whole subtree** (every file under it, recursively). Also present on each `childDirectories[]` entry, scoped to that child's own subtree. When viewing root, `breadcrumb` is just the folder itself and `path` is `"/My Files"`.
 
 ---
 
@@ -102,17 +104,16 @@ The counters are **maintained on write, inside the same transaction as the file/
 
 This inverts the earlier trade-off: writes now do a bounded walk up the tree, but reads are O(1) field lookups regardless of subtree size. See `../architecture/transaction-patterns.md` for the transactional shape and retry-safety, and `../architecture/database-schema.md` for the Atlas `minimum: 0` underflow guard (the Mongoose model deliberately has no `min`, since `$inc` skips validators).
 
-## 🧭 Ancestor Chain (`getAncestors`)
+## 🧭 Breadcrumb & Path (stored `ancestorIds` + `resolveDirectoryNames`)
 
-Returns the ordered list `[root, …, immediate parent]` for breadcrumbs. **Single DB call** via an upward `$graphLookup`:
+Each `Directory` stores **`ancestorIds`** — its ancestor IDs, root-first, **excluding itself** (root → `[]`). It's seeded on create (`createDirectory`, which also covers Drive import); the root gets `[]` from the schema `default`. So a child of root stores `[rootId]`, a grandchild `[rootId, childId]`, and so on. The field is indexed `{ ancestorIds: 1, userId: 1 }` (which also serves a future move's subtree query) and is **never returned raw** — it's stripped from the response.
 
-- `startWith: "$parentDirId"` — begin at the directory's immediate parent.
-- `connectFromField: "parentDirId"`, `connectToField: "_id"` — follow each parent up the chain.
-- `depthField: "depth"` — every returned ancestor carries its hop count from the start (depth 0 = immediate parent, highest depth = root).
-- `restrictSearchWithMatch: { userId }` — confines the climb to the requesting user's tree.
-- `maxDepth: 20` — matches the descendant-traversal cap elsewhere; bounds even pathological nests.
+On read, `resolveDirectoryNames(ancestorIds, userId)` turns that list into `[{ _id, name }]` (root → immediate parent) with a **single indexed `$in`** — no `$graphLookup`, no depth-sort. Input order is preserved client-side via a `Map` keyed by id, and the query is ownership-scoped by `userId`. Two pure helpers in `src/utils/path.js` then shape the response:
 
-After the aggregate, JS sorts ancestors by **descending depth** so the array reads root-first. Root directories return `ancestors: []` because `parentDirId === null` and the graph traversal yields nothing.
+- `generateBreadCrumb(ancestors, directory)` → the clickable trail root → **current** folder (self-inclusive), `[{ _id, name }]`.
+- `generatePath(breadcrumb)` → a display string, e.g. `"/My Files/Documents"`.
+
+A root directory's `ancestorIds` is `[]`, so its breadcrumb is just the folder itself and its `path` is `"/My Files"`.
 
 ## 🚀 Performance & Scalability Considerations
 
@@ -130,7 +131,7 @@ Each child folder's `fileCount`/`totalSize` is read from its own stored fields i
 - 1 — top-level `Directory.findOne`
 - 1 — direct files (`File.find`)
 - 1 — direct children (`Directory.find`) — each carries its stored stats
-- 1 — `getAncestors` (single aggregate)
+- 1 — `resolveDirectoryNames` (single indexed `$in`)
 
 Before PR #62 this was `2N + 6` — a `getNestedSubtreeStats` fanout of 2 queries per child that queued under the connection pool for folders with 1000+ children. That fanout, and the `p-limit`/pagination follow-up it would have needed, is gone; only the unbounded `.find()` result-size concern (below) remains.
 

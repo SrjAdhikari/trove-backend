@@ -56,14 +56,31 @@ export const createTestUser = async (overrides = {}) => {
 export const createTestSession = async (userId) =>
 	Session.create({ userId, deviceInfo: {} });
 
-export const createTestDirectory = async (userId, overrides = {}) =>
-	Directory.create({
+export const createTestDirectory = async (userId, overrides = {}) => {
+	const parentDirId = overrides.parentDirId ?? null;
+
+	let ancestorIds = overrides.ancestorIds;
+	if (ancestorIds === undefined) {
+		if (parentDirId) {
+			const parent = await Directory.findById(
+				parentDirId,
+				"ancestorIds",
+			).lean();
+			ancestorIds = parent ? [...parent.ancestorIds, parent._id] : [];
+		} else {
+			ancestorIds = [];
+		}
+	}
+
+	return Directory.create({
 		name: overrides.name ?? `dir-${nextId()}`,
 		userId,
-		parentDirId: overrides.parentDirId ?? null,
+		parentDirId,
+		ancestorIds,
 		size: overrides.size ?? 0,
 		fileCount: overrides.fileCount ?? 0,
 	});
+};
 
 export const createTestFile = async (userId, parentDirId, overrides = {}) =>
 	File.create({
