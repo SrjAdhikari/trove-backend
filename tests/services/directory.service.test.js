@@ -3,7 +3,13 @@ import mongoose from "mongoose";
 import { Readable } from "node:stream";
 import { rm } from "node:fs/promises";
 
-import { adjustAncestorStats, deleteDirectory, getDirectory } from "../../src/services/directory.service.js";
+import {
+	adjustAncestorStats,
+	createDirectory,
+	deleteDirectory,
+	getDirectory,
+	resolveDirectoryNames,
+} from "../../src/services/directory.service.js";
 import { uploadFile } from "../../src/services/file.service.js";
 import { buildFilePath } from "../../src/utils/storagePath.js";
 import Directory from "../../src/models/directory.model.js";
@@ -206,5 +212,153 @@ describe("getDirectory reads stored sizes", () => {
 		expect(byId[String(c1._id)]).toBe(4);
 		expect(byId[String(c2._id)]).toBe(2);
 		expect(data.totalSize).toBe(6); // root subtree total
+	});
+});
+
+describe("createDirectory seeds ancestorIds", () => {
+	it("sets a child's ancestorIds to [rootId]", async () => {
+		const user = await createTestUser();
+		const root = await createTestDirectory(user._id);
+
+		const child = await createDirectory(root._id, "Documents", user._id);
+
+		expect(child.ancestorIds.map(String)).toEqual([String(root._id)]);
+	});
+
+	it("sets a grandchild's ancestorIds to [rootId, childId]", async () => {
+		const user = await createTestUser();
+		const root = await createTestDirectory(user._id);
+		const child = await createDirectory(root._id, "Documents", user._id);
+
+		const grandchild = await createDirectory(child._id, "Reports", user._id);
+
+		expect(grandchild.ancestorIds.map(String)).toEqual([
+			String(root._id),
+			String(child._id),
+		]);
+	});
+});
+
+describe("createTestDirectory factory seeds ancestorIds", () => {
+	it("gives a root directory an empty ancestorIds", async () => {
+		const user = await createTestUser();
+		const root = await createTestDirectory(user._id);
+		expect(root.ancestorIds.map(String)).toEqual([]);
+	});
+
+	it("gives a nested directory its ancestor id chain", async () => {
+		const user = await createTestUser();
+		const root = await createTestDirectory(user._id);
+		const child = await createTestDirectory(user._id, { parentDirId: root._id });
+		const grandchild = await createTestDirectory(user._id, {
+			parentDirId: child._id,
+		});
+
+		expect(grandchild.ancestorIds.map(String)).toEqual([
+			String(root._id),
+			String(child._id),
+		]);
+	});
+});
+
+describe("resolveDirectoryNames", () => {
+	it("returns an empty array for an empty chain", async () => {
+		const user = await createTestUser();
+		expect(await resolveDirectoryNames([], user._id)).toEqual([]);
+	});
+
+	it("resolves ids to {_id, name} in input order", async () => {
+		const user = await createTestUser();
+		const root = await createTestDirectory(user._id, { name: "My Files" });
+		const docs = await createTestDirectory(user._id, {
+			name: "Documents",
+			parentDirId: root._id,
+		});
+
+		const result = await resolveDirectoryNames([root._id, docs._id], user._id);
+
+		expect(result.map((r) => r.name)).toEqual(["My Files", "Documents"]);
+		expect(result.map((r) => String(r._id))).toEqual([
+			String(root._id),
+			String(docs._id),
+		]);
+	});
+
+	it("preserves input order regardless of $in return order", async () => {
+		const user = await createTestUser();
+		const a = await createTestDirectory(user._id, { name: "Alpha" });
+		const b = await createTestDirectory(user._id, { name: "Bravo" });
+
+		const result = await resolveDirectoryNames([b._id, a._id], user._id);
+
+		expect(result.map((r) => r.name)).toEqual(["Bravo", "Alpha"]);
+	});
+
+	it("does not resolve a directory owned by another user (ownership scoping)", async () => {
+		const owner = await createTestUser();
+		const other = await createTestUser();
+		const dir = await createTestDirectory(owner._id, { name: "Secret" });
+
+		const result = await resolveDirectoryNames([dir._id], other._id);
+
+		expect(String(result[0]._id)).toBe(String(dir._id));
+		expect(result[0].name).toBeUndefined();
+	});
+});
+
+describe("getDirectory breadcrumb + path", () => {
+	it("returns a self-inclusive breadcrumb (root → current) and a path string", async () => {
+		const user = await createTestUser();
+		const root = await createTestDirectory(user._id, { name: "My Files" });
+		const docs = await createTestDirectory(user._id, {
+			name: "Documents",
+			parentDirId: root._id,
+		});
+		const reports = await createTestDirectory(user._id, {
+			name: "Reports",
+			parentDirId: docs._id,
+		});
+
+		const data = await getDirectory(reports._id, user._id);
+
+		expect(data.breadcrumb.map((c) => c.name)).toEqual([
+			"My Files",
+			"Documents",
+			"Reports",
+		]);
+		expect(data.breadcrumb.map((c) => String(c._id))).toEqual([
+			String(root._id),
+			String(docs._id),
+			String(reports._id),
+		]);
+		expect(data.path).toBe("/My Files/Documents/Reports");
+	});
+
+	it("returns just the folder itself for the root directory", async () => {
+		const user = await createTestUser();
+		const root = await createTestDirectory(user._id, { name: "My Files" });
+
+		const data = await getDirectory(root._id, user._id);
+
+		expect(data.breadcrumb.map((c) => c.name)).toEqual(["My Files"]);
+		expect(data.path).toBe("/My Files");
+	});
+
+	it("does not expose ancestors or raw ancestorIds (top-level or children)", async () => {
+		const user = await createTestUser();
+		const root = await createTestDirectory(user._id, { name: "My Files" });
+		const child = await createTestDirectory(user._id, {
+			name: "Documents",
+			parentDirId: root._id,
+		});
+
+		const data = await getDirectory(root._id, user._id);
+
+		expect(data.ancestors).toBeUndefined();
+		expect(data.ancestorIds).toBeUndefined();
+		const childView = data.childDirectories.find(
+			(d) => String(d.id) === String(child._id),
+		);
+		expect(childView.ancestorIds).toBeUndefined();
 	});
 });

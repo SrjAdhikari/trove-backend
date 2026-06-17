@@ -21,6 +21,12 @@ const directorySchema = {
 				description:
 					"parentDirId must be a valid ObjectId or null if this is the root directory",
 			},
+			ancestorIds: {
+				bsonType: "array",
+				items: { bsonType: "objectId" },
+				description:
+					"Ordered ancestor directory IDs from root to immediate parent (empty for the root directory)",
+			},
 			userId: {
 				bsonType: "objectId",
 				description:

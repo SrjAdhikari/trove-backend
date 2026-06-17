@@ -17,6 +17,10 @@ const directorySchema = new Schema(
 			ref: "Directory",
 			default: null,
 		},
+		ancestorIds: {
+			type: [{ type: Schema.Types.ObjectId, ref: "Directory" }],
+			default: [],
+		},
 		userId: {
 			type: Schema.Types.ObjectId,
 			ref: "User",
@@ -40,6 +44,7 @@ const directorySchema = new Schema(
 );
 
 directorySchema.index({ parentDirId: 1, userId: 1 });
+directorySchema.index({ ancestorIds: 1, userId: 1 });
 
 const Directory = model("Directory", directorySchema);
 export default Directory;
