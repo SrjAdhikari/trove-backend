@@ -216,26 +216,37 @@ describe("getDirectory reads stored sizes", () => {
 });
 
 describe("createDirectory seeds ancestorIds", () => {
-	it("sets a child's ancestorIds to [rootId]", async () => {
+	it("stores a child's ancestorIds as [rootId]", async () => {
 		const user = await createTestUser();
 		const root = await createTestDirectory(user._id);
 
 		const child = await createDirectory(root._id, "Documents", user._id);
 
-		expect(child.ancestorIds.map(String)).toEqual([String(root._id)]);
+		const stored = await Directory.findById(child._id).lean();
+		expect(stored.ancestorIds.map(String)).toEqual([String(root._id)]);
 	});
 
-	it("sets a grandchild's ancestorIds to [rootId, childId]", async () => {
+	it("stores a grandchild's ancestorIds as [rootId, childId]", async () => {
 		const user = await createTestUser();
 		const root = await createTestDirectory(user._id);
 		const child = await createDirectory(root._id, "Documents", user._id);
 
 		const grandchild = await createDirectory(child._id, "Reports", user._id);
 
-		expect(grandchild.ancestorIds.map(String)).toEqual([
+		const stored = await Directory.findById(grandchild._id).lean();
+		expect(stored.ancestorIds.map(String)).toEqual([
 			String(root._id),
 			String(child._id),
 		]);
+	});
+
+	it("does not expose ancestorIds in the create response", async () => {
+		const user = await createTestUser();
+		const root = await createTestDirectory(user._id);
+
+		const child = await createDirectory(root._id, "Documents", user._id);
+
+		expect(child.ancestorIds).toBeUndefined();
 	});
 });
 

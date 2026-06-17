@@ -95,7 +95,10 @@ const createDirectory = async (parentDirId, dirname, userId) => {
 		ancestorIds: [...parentDir.ancestorIds, parentDir._id],
 	});
 
-	return directory;
+	// ancestorIds is internal denormalization — drop it so the create and read
+	// (getDirectory) contracts stay symmetric.
+	const { ancestorIds, ...directoryView } = directory.toObject();
+	return directoryView;
 };
 
 /**
