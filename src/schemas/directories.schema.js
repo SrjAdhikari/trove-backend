@@ -42,6 +42,12 @@ const directorySchema = {
 				minimum: 0,
 				description: "Total number of files in this directory's subtree",
 			},
+			folderCount: {
+				bsonType: "number",
+				minimum: 0,
+				description:
+					"Total number of folders nested in this directory's subtree (excludes itself)",
+			},
 			createdAt: {
 				bsonType: "date",
 			},

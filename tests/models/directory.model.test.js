@@ -51,6 +51,12 @@ describe("Directory model — size/fileCount", () => {
 		const fresh = await Directory.findById(dir._id);
 		expect(fresh.size).toBe(4096);
 	});
+
+	it("defaults folderCount to 0 on a new directory", async () => {
+		const user = await createTestUser();
+		const dir = await createTestDirectory(user._id);
+		expect(dir.folderCount).toBe(0);
+	});
 });
 
 describe("Directory model — name validation", () => {

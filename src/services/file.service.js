@@ -9,7 +9,7 @@ import { pipeline } from "node:stream/promises";
 import File from "../models/file.model.js";
 import Directory from "../models/directory.model.js";
 
-import { adjustAncestorStats } from "./directory.service.js";
+import { updateAncestorDirectoryStats } from "./directory.service.js";
 
 import createByteCounter from "../utils/byteCounter.js";
 import { buildFilePath } from "../utils/storagePath.js";
@@ -149,7 +149,7 @@ const uploadFile = async (
 			);
 			file = created[0];
 
-			await adjustAncestorStats(
+			await updateAncestorDirectoryStats(
 				parentDir._id,
 				{ bytes, files: 1 },
 				mongooseSession,
@@ -217,7 +217,7 @@ const deleteFile = async (fileId, userId) => {
 				{ _id: fileId, userId },
 				{ session: mongooseSession },
 			);
-			await adjustAncestorStats(
+			await updateAncestorDirectoryStats(
 				file.parentDirId,
 				{ bytes: -file.size, files: -1 },
 				mongooseSession,

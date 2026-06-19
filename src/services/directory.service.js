@@ -19,8 +19,9 @@ const {
 
 /**
  * Retrieves a directory with its immediate files and child folders, recursive
- * `fileCount` + `totalSize` for the directory itself and each child folder,
- * a self-inclusive breadcrumb (root → current), and a display path string.
+ * `fileCount`, `folderCount` + `totalSize` for the directory itself and each
+ * child folder, a self-inclusive breadcrumb (root → current), and a display
+ * path string.
  *
  * @param {string} directoryId - The ID of the directory to fetch
  * @param {string} userId - The ID of the authenticated user to verify ownership
@@ -58,7 +59,6 @@ const getDirectory = async (directoryId, userId) => {
 	return {
 		...directoryView,
 		totalSize: size,
-		folderCount: childDirectories.length,
 		breadcrumb,
 		path,
 		files: files.map((file) => ({ ...file, id: file._id })),
@@ -89,12 +89,31 @@ const createDirectory = async (parentDirId, dirname, userId) => {
 		);
 	}
 
-	const directory = await Directory.create({
-		name: dirname,
-		parentDirId,
-		userId,
-		ancestorIds: [...parentDir.ancestorIds, parentDir._id],
-	});
+	let directory;
+	const session = await mongoose.startSession();
+	try {
+		await session.withTransaction(async () => {
+			const created = await Directory.create(
+				[
+					{
+						name: dirname,
+						parentDirId,
+						userId,
+						ancestorIds: [...parentDir.ancestorIds, parentDir._id],
+					},
+				],
+				{ session },
+			);
+
+			// The new folder adds one folder to every ancestor's subtree. Its own
+			// folderCount stays 0, so the walk starts at the parent, not at it.
+			await updateAncestorDirectoryStats(parentDirId, { folders: 1 }, session);
+
+			directory = created[0];
+		});
+	} finally {
+		session.endSession();
+	}
 
 	// ancestorIds is internal denormalization — drop it so the create and read
 	// (getDirectory) contracts stay symmetric.
@@ -197,9 +216,13 @@ const deleteDirectory = async (directoryId, userId) => {
 			);
 
 			// Subtract the deleted subtree's totals from every ancestor above it.
-			await adjustAncestorStats(
+			await updateAncestorDirectoryStats(
 				rootDir.parentDirId,
-				{ bytes: -rootDir.size, files: -rootDir.fileCount },
+				{
+					bytes: -rootDir.size,
+					files: -rootDir.fileCount,
+					folders: -allDirIds.length,
+				},
 				session,
 			);
 		});
@@ -261,15 +284,20 @@ const getAllNestedDirectories = async (directoryId, userId) => {
 };
 
 /**
- * Walks parentDirId from startDirId up to the root and applies a size/fileCount
- * delta to that directory and every ancestor, atomically via $inc. Pass the
- * active transaction `session` so the walk + update join the caller's transaction.
+ * Walks parentDirId from startDirId up to the root and applies a
+ * size/fileCount/folderCount delta to that directory and every ancestor,
+ * atomically via $inc. Pass the active transaction `session` so the walk +
+ * update join the caller's transaction.
  *
  * @param {import("mongoose").Types.ObjectId|string} startDirId
- * @param {{ bytes: number, files: number }} delta
+ * @param {{ bytes?: number, files?: number, folders?: number }} delta
  * @param {import("mongoose").ClientSession} [session]
  */
-const adjustAncestorStats = async (startDirId, { bytes, files }, session) => {
+const updateAncestorDirectoryStats = async (
+	startDirId,
+	{ bytes = 0, files = 0, folders = 0 },
+	session,
+) => {
 	const ancestorDirIds = [];
 	let currentDirId = startDirId;
 
@@ -287,7 +315,7 @@ const adjustAncestorStats = async (startDirId, { bytes, files }, session) => {
 
 	await Directory.updateMany(
 		{ _id: { $in: ancestorDirIds } },
-		{ $inc: { size: bytes, fileCount: files } },
+		{ $inc: { size: bytes, fileCount: files, folderCount: folders } },
 		{ session },
 	);
 };
@@ -318,6 +346,6 @@ export {
 	createDirectory,
 	updateDirectory,
 	deleteDirectory,
-	adjustAncestorStats,
+	updateAncestorDirectoryStats,
 	resolveDirectoryNames,
 };
