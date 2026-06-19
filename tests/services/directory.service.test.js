@@ -213,6 +213,28 @@ describe("getDirectory reads stored sizes", () => {
 		expect(byId[String(c2._id)]).toBe(2);
 		expect(data.totalSize).toBe(6); // root subtree total
 	});
+
+	it("reports folderCount as immediate child folders only, not recursive (worst case)", async () => {
+		const user = await createTestUser();
+		const root = await createTestDirectory(user._id);
+		const child = await createTestDirectory(user._id, { parentDirId: root._id });
+		await createTestDirectory(user._id, { parentDirId: root._id });
+		// a grandchild must NOT inflate the root's folderCount
+		await createTestDirectory(user._id, { parentDirId: child._id });
+
+		const data = await getDirectory(root._id, user._id);
+
+		expect(data.folderCount).toBe(2);
+	});
+
+	it("reports folderCount 0 for a folder with no sub-folders (boundary)", async () => {
+		const user = await createTestUser();
+		const root = await createTestDirectory(user._id);
+
+		const data = await getDirectory(root._id, user._id);
+
+		expect(data.folderCount).toBe(0);
+	});
 });
 
 describe("createDirectory seeds ancestorIds", () => {

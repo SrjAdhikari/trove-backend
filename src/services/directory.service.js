@@ -58,6 +58,7 @@ const getDirectory = async (directoryId, userId) => {
 	return {
 		...directoryView,
 		totalSize: size,
+		folderCount: childDirectories.length,
 		breadcrumb,
 		path,
 		files: files.map((file) => ({ ...file, id: file._id })),
