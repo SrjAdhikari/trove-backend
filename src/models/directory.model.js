@@ -36,6 +36,11 @@ const directorySchema = new Schema(
 			required: true,
 			default: 0,
 		},
+		folderCount: {
+			type: Number,
+			required: true,
+			default: 0,
+		},
 	},
 	{
 		strict: "throw",

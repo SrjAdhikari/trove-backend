@@ -4,7 +4,7 @@ import { Readable } from "node:stream";
 import { rm } from "node:fs/promises";
 
 import {
-	adjustAncestorStats,
+	updateAncestorDirectoryStats,
 	createDirectory,
 	deleteDirectory,
 	getDirectory,
@@ -20,19 +20,21 @@ const statsOf = async (id) => {
 	return { size: d.size, fileCount: d.fileCount };
 };
 
+const folderCountOf = async (id) => (await Directory.findById(id)).folderCount;
+
 const uploadInto = async (parentId, userId, name, body) => {
 	const file = await uploadFile(parentId, userId, name, Readable.from(Buffer.from(body)));
 	return file;
 };
 
-describe("adjustAncestorStats", () => {
+describe("updateAncestorDirectoryStats", () => {
 	it("increments the start folder and every ancestor up to root", async () => {
 		const user = await createTestUser();
 		const root = await createTestDirectory(user._id);
 		const a = await createTestDirectory(user._id, { parentDirId: root._id });
 		const b = await createTestDirectory(user._id, { parentDirId: a._id });
 
-		await adjustAncestorStats(b._id, { bytes: 100, files: 1 });
+		await updateAncestorDirectoryStats(b._id, { bytes: 100, files: 1 });
 
 		for (const id of [root._id, a._id, b._id]) {
 			expect(await statsOf(id)).toEqual({ size: 100, fileCount: 1 });
@@ -42,7 +44,7 @@ describe("adjustAncestorStats", () => {
 	it("increments only the root when starting at the root (boundary)", async () => {
 		const user = await createTestUser();
 		const root = await createTestDirectory(user._id);
-		await adjustAncestorStats(root._id, { bytes: 7, files: 1 });
+		await updateAncestorDirectoryStats(root._id, { bytes: 7, files: 1 });
 		expect(await statsOf(root._id)).toEqual({ size: 7, fileCount: 1 });
 	});
 
@@ -52,7 +54,7 @@ describe("adjustAncestorStats", () => {
 		const a = await createTestDirectory(user._id, { parentDirId: root._id });
 		const sibling = await createTestDirectory(user._id, { parentDirId: root._id });
 
-		await adjustAncestorStats(a._id, { bytes: 50, files: 1 });
+		await updateAncestorDirectoryStats(a._id, { bytes: 50, files: 1 });
 
 		expect(await statsOf(sibling._id)).toEqual({ size: 0, fileCount: 0 });
 		expect(await statsOf(root._id)).toEqual({ size: 50, fileCount: 1 });
@@ -61,8 +63,8 @@ describe("adjustAncestorStats", () => {
 	it("applies negative deltas (decrement)", async () => {
 		const user = await createTestUser();
 		const root = await createTestDirectory(user._id);
-		await adjustAncestorStats(root._id, { bytes: 100, files: 2 });
-		await adjustAncestorStats(root._id, { bytes: -40, files: -1 });
+		await updateAncestorDirectoryStats(root._id, { bytes: 100, files: 2 });
+		await updateAncestorDirectoryStats(root._id, { bytes: -40, files: -1 });
 		expect(await statsOf(root._id)).toEqual({ size: 60, fileCount: 1 });
 	});
 
@@ -76,7 +78,7 @@ describe("adjustAncestorStats", () => {
 			parentDirId = d._id;
 		}
 
-		await adjustAncestorStats(dirs[5]._id, { bytes: 10, files: 1 });
+		await updateAncestorDirectoryStats(dirs[5]._id, { bytes: 10, files: 1 });
 
 		for (const d of dirs) {
 			expect(await statsOf(d._id)).toEqual({ size: 10, fileCount: 1 });
@@ -86,7 +88,7 @@ describe("adjustAncestorStats", () => {
 	it("is a no-op when the start directory does not exist (nullish)", async () => {
 		const ghostId = new mongoose.Types.ObjectId();
 		await expect(
-			adjustAncestorStats(ghostId, { bytes: 100, files: 1 }),
+			updateAncestorDirectoryStats(ghostId, { bytes: 100, files: 1 }),
 		).resolves.toBeUndefined();
 	});
 
@@ -96,9 +98,50 @@ describe("adjustAncestorStats", () => {
 		// pins the known behavior so a future change is conscious.
 		const user = await createTestUser();
 		const root = await createTestDirectory(user._id);
-		await adjustAncestorStats(root._id, { bytes: 50, files: 1 });
-		await adjustAncestorStats(root._id, { bytes: -200, files: -5 });
+		await updateAncestorDirectoryStats(root._id, { bytes: 50, files: 1 });
+		await updateAncestorDirectoryStats(root._id, { bytes: -200, files: -5 });
 		expect(await statsOf(root._id)).toEqual({ size: -150, fileCount: -4 });
+	});
+
+	it("applies a positive folders delta to the start folder and every ancestor", async () => {
+		const user = await createTestUser();
+		const root = await createTestDirectory(user._id);
+		const a = await createTestDirectory(user._id, { parentDirId: root._id });
+		const b = await createTestDirectory(user._id, { parentDirId: a._id });
+
+		await updateAncestorDirectoryStats(b._id, { folders: 1 });
+
+		for (const id of [root._id, a._id, b._id]) {
+			expect(await folderCountOf(id)).toBe(1);
+		}
+	});
+
+	it("applies a negative folders delta (decrement)", async () => {
+		const user = await createTestUser();
+		const root = await createTestDirectory(user._id);
+		await updateAncestorDirectoryStats(root._id, { folders: 2 });
+		await updateAncestorDirectoryStats(root._id, { folders: -1 });
+		expect(await folderCountOf(root._id)).toBe(1);
+	});
+
+	it("applies bytes, files, and folders together", async () => {
+		const user = await createTestUser();
+		const root = await createTestDirectory(user._id);
+		await updateAncestorDirectoryStats(root._id, { bytes: 100, files: 2, folders: 3 });
+		const d = await Directory.findById(root._id);
+		expect({
+			size: d.size,
+			fileCount: d.fileCount,
+			folderCount: d.folderCount,
+		}).toEqual({ size: 100, fileCount: 2, folderCount: 3 });
+	});
+
+	it("leaves folderCount untouched when folders is omitted (defaults to 0)", async () => {
+		const user = await createTestUser();
+		const root = await createTestDirectory(user._id);
+		await updateAncestorDirectoryStats(root._id, { folders: 5 });
+		await updateAncestorDirectoryStats(root._id, { bytes: 10, files: 1 });
+		expect(await folderCountOf(root._id)).toBe(5);
 	});
 });
 
@@ -160,6 +203,49 @@ describe("deleteDirectory maintains ancestor sizes", () => {
 	});
 });
 
+describe("deleteDirectory maintains ancestor folderCount", () => {
+	it("decrements ancestors by the full deleted subtree's folder count", async () => {
+		const user = await createTestUser();
+		const root = await createTestDirectory(user._id);
+		const a = await createDirectory(root._id, "folderA", user._id);
+		const b = await createDirectory(a._id, "folderB", user._id);
+		await createDirectory(b._id, "folderC", user._id);
+		// root.folderCount = 3 (a, b, c)
+
+		await deleteDirectory(a._id, user._id);
+
+		expect(await folderCountOf(root._id)).toBe(0);
+	});
+
+	it("decrements the parent by 1 when deleting an empty leaf folder (boundary)", async () => {
+		const user = await createTestUser();
+		const root = await createTestDirectory(user._id);
+		const a = await createDirectory(root._id, "folderA", user._id);
+		const leaf = await createDirectory(a._id, "leaf", user._id);
+		// root = 2 (a, leaf), a = 1 (leaf)
+
+		await deleteDirectory(leaf._id, user._id);
+
+		expect(await folderCountOf(root._id)).toBe(1);
+		expect(await folderCountOf(a._id)).toBe(0);
+	});
+
+	it("leaves a sibling subtree's count intact (isolation)", async () => {
+		const user = await createTestUser();
+		const root = await createTestDirectory(user._id);
+		const a = await createDirectory(root._id, "folderA", user._id);
+		const sibling = await createDirectory(root._id, "sibling", user._id);
+		await createDirectory(sibling._id, "sChild", user._id);
+		await createDirectory(a._id, "aChild", user._id);
+		// root = 4 (a, sibling, sChild, aChild)
+
+		await deleteDirectory(a._id, user._id); // removes a + aChild = 2
+
+		expect(await folderCountOf(root._id)).toBe(2); // sibling + sChild
+		expect(await folderCountOf(sibling._id)).toBe(1); // sChild
+	});
+});
+
 describe("getDirectory reads stored sizes", () => {
 	it("returns stored totalSize/fileCount for the folder and each child", async () => {
 		const user = await createTestUser();
@@ -212,6 +298,67 @@ describe("getDirectory reads stored sizes", () => {
 		expect(byId[String(c1._id)]).toBe(4);
 		expect(byId[String(c2._id)]).toBe(2);
 		expect(data.totalSize).toBe(6); // root subtree total
+	});
+
+	it("returns recursive folderCount for the opened folder and each child", async () => {
+		const user = await createTestUser();
+		const root = await createTestDirectory(user._id);
+		const child1 = await createDirectory(root._id, "child1", user._id);
+		const child2 = await createDirectory(child1._id, "child2", user._id);
+		await createDirectory(child2._id, "child3", user._id);
+
+		const data = await getDirectory(root._id, user._id);
+		expect(data.folderCount).toBe(3);
+
+		const child1View = data.childDirectories.find(
+			(d) => String(d.id) === String(child1._id),
+		);
+		expect(child1View.folderCount).toBe(2);
+	});
+
+	it("reports folderCount 0 for a folder with no sub-folders (boundary)", async () => {
+		const user = await createTestUser();
+		const root = await createTestDirectory(user._id);
+
+		const data = await getDirectory(root._id, user._id);
+
+		expect(data.folderCount).toBe(0);
+	});
+});
+
+describe("createDirectory maintains folderCount", () => {
+	it("increments the parent's folderCount and starts the new folder at 0", async () => {
+		const user = await createTestUser();
+		const root = await createTestDirectory(user._id);
+
+		const child = await createDirectory(root._id, "Documents", user._id);
+
+		expect(await folderCountOf(root._id)).toBe(1);
+		expect(await folderCountOf(child._id)).toBe(0);
+	});
+
+	it("produces recursive counts down a deep chain (worst case)", async () => {
+		const user = await createTestUser();
+		const root = await createTestDirectory(user._id);
+		const child1 = await createDirectory(root._id, "child1", user._id);
+		const child2 = await createDirectory(child1._id, "child2", user._id);
+		const child3 = await createDirectory(child2._id, "child3", user._id);
+
+		expect(await folderCountOf(root._id)).toBe(3);
+		expect(await folderCountOf(child1._id)).toBe(2);
+		expect(await folderCountOf(child2._id)).toBe(1);
+		expect(await folderCountOf(child3._id)).toBe(0);
+	});
+
+	it("does not affect a sibling subtree (isolation)", async () => {
+		const user = await createTestUser();
+		const root = await createTestDirectory(user._id);
+		const a = await createDirectory(root._id, "folderA", user._id);
+		const sibling = await createDirectory(root._id, "sibling", user._id);
+		await createDirectory(a._id, "aChild", user._id);
+
+		expect(await folderCountOf(sibling._id)).toBe(0);
+		expect(await folderCountOf(root._id)).toBe(3); // a, sibling, aChild
 	});
 });
 
