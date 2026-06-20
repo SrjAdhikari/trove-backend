@@ -1,12 +1,12 @@
 # Profile Picture Upload
 
-> **Status:** As-built (2026-06-02). Shipped in PR #51 (`7f6a86a` feat + `6f9591a` fix). Lets users upload and replace their profile picture in the `/api/users` module, served via public capability URLs. No schema migration — reuses the existing `profilePicture` field. *(Informally "avatar"; all API identifiers use `profilePicture` / `profile-picture`.)*
+> **Status:** As-built (2026-06-02). Lets users upload and replace their profile picture in the `/api/users` module, served via public capability URLs. No schema migration — reuses the existing `profilePicture` field. *(Informally "avatar"; all API identifiers use `profilePicture` / `profile-picture`.)*
 
 ## Context
 
 Today a user's photo lives in `User.profilePicture` (`String`, default `null`). The **only** writer is OAuth: `oauth.service.js` seeds it at account creation and **re-writes it on every Google/GitHub login** (along with `name`) to the provider's current values. Email/password users have no way to set a photo at all.
 
-Two facts make that login re-sync a problem now: PR #47 made `name` user-editable via `PATCH /profile`, and this work makes the picture user-editable too. A login re-sync would clobber whichever the user changed in our app. So this work both adds picture upload **and disables the login re-sync**, making our app the source of truth for `name` and `profilePicture` after signup.
+Two facts make that login re-sync a problem now: `name` became user-editable via `PATCH /profile`, and this work makes the picture user-editable too. A login re-sync would clobber whichever the user changed in our app. So this work both adds picture upload **and disables the login re-sync**, making our app the source of truth for `name` and `profilePicture` after signup.
 
 The frontend continues to read a single field — `profilePicture` — and render it directly in an `<img>`, whether it points at a provider URL or at our own serving route. The design is dependency-free: it reuses the raw-stream upload pattern from `file.service.js` (no multipart parser) and adds no image-processing library.
 

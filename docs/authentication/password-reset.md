@@ -1,6 +1,6 @@
 # Password Reset Flow
 
-This document outlines the architecture, data flow, and edge cases handled by the TroveCloud backend during the Forgot Password and Reset Password process. Shipped in PR #25 (2026-04-30).
+This document outlines the architecture, data flow, and edge cases handled by the TroveCloud backend during the Forgot Password and Reset Password process. Shipped 2026-04-30.
 
 ## 🏗️ Architecture
 
@@ -77,11 +77,11 @@ Defensive default in `otp.service.js`. A verified user who hits `/reset-password
 - **Matches `verifyOTP`'s contract** — same helper, same edge case, same outcome. One mental model.
 - **Slightly less information leakage** — an attacker probing the endpoint can't distinguish "user has requested a reset and OTP expired" from "user has never requested a reset."
 
-A bespoke `OTP_NOT_REQUESTED` code was considered (see CodeRabbit review on PR #25) and declined for these reasons.
+A bespoke `OTP_NOT_REQUESTED` code was considered and declined for these reasons.
 
 ### Why the cooldown is enforced on send, not on verify
 
-A 60-second cooldown on `forgot-password` blocks email-service abuse. The OTP space is 6 digits (1M values) over a 10-minute window, which a high-volume attacker could theoretically bruteforce. The mitigation — a rate limiter on all auth endpoints — **shipped in PR #54**: `reset-password` (and the other auth routes) sit behind the `auth` tier (≈10 requests / 15 min, keyed by IP), bounding brute-force attempts. A per-account OTP attempt-lockout (distinct from the IP limiter) is still a separate planned item.
+A 60-second cooldown on `forgot-password` blocks email-service abuse. The OTP space is 6 digits (1M values) over a 10-minute window, which a high-volume attacker could theoretically bruteforce. The mitigation — a rate limiter on all auth endpoints — **is live**: `reset-password` (and the other auth routes) sit behind the `auth` tier (≈10 requests / 15 min, keyed by IP), bounding brute-force attempts. A per-account OTP attempt-lockout (distinct from the IP limiter) is still a separate planned item.
 
 ---
 

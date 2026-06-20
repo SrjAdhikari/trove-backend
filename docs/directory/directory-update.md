@@ -80,6 +80,6 @@ Both the `findOne` and `findOneAndUpdate` queries include `userId` in the filter
 
 ### Input Validation at the Router (Zod)
 
-`validateBody(renameDirectorySchema)` validates and sanitizes the body before the controller runs (PR #44): `newDirName` must be a string, is trimmed, has control characters and path dividers stripped, and is capped at 255 chars; an empty-after-sanitize value is rejected with `400 VALIDATION_ERROR`. Because the field is `z.string()`, operator-injection shapes like `{ $ne: "" }` are rejected before the service runs.
+`validateBody(renameDirectorySchema)` validates and sanitizes the body before the controller runs: `newDirName` must be a string, is trimmed, has control characters and path dividers stripped, and is capped at 255 chars; an empty-after-sanitize value is rejected with `400 VALIDATION_ERROR`. Because the field is `z.string()`, operator-injection shapes like `{ $ne: "" }` are rejected before the service runs.
 
 ---

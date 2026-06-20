@@ -1,6 +1,6 @@
 # Multi-Provider OAuth
 
-> **Status:** As-built (2026-04-23). Reflects the architecture in place after PR #14 (shared OAuth helper) and PR #13 (GitHub OAuth).
+> **Status:** As-built (2026-04-23). Reflects the architecture in place after the shared OAuth helper and GitHub OAuth landed.
 
 Describes the cross-cutting design that powers Google and GitHub sign-in. For per-flow user-journey detail (request shape, response shape, redirect mechanics), see [`docs/authentication/login-and-sessions.md`](../authentication/login-and-sessions.md). This document is for understanding the _shape_ of the system — how a third provider would slot in, where the security guards live, why tokens aren't stored.
 
@@ -245,7 +245,7 @@ No `*_CALLBACK_URL` on the backend — the frontend owns OAuth redirect URLs.
 ### Deferred work tracked in memory
 
 - OAuth body type-checking (currently truthy-only) → covered when backend Zod validation lands.
-- Rate limiting on the OAuth endpoints → **implemented** (PR #54): the `oauth` tier in `src/middlewares/rateLimit.middleware.js` (20 / 15 min, keyed by IP).
+- Rate limiting on the OAuth endpoints → **implemented**: the `oauth` tier in `src/middlewares/rateLimit.middleware.js` (20 / 15 min, keyed by IP).
 - Account linking → no concrete plan; would require schema changes.
 
 ---

@@ -41,7 +41,7 @@ Source: `src/models/user.model.js`. Atlas mirror: `src/schemas/user.schema.js`.
 | `email`                 | String   | yes                       | —         | `trim`, `lowercase`, unique index, regex-validated            |
 | `password`              | String   | only if `provider=email`  | —         | `minlength: 8`, `select: false`, bcrypt-hashed pre-save       |
 | `rootDirId`             | ObjectId | no                        | —         | Set during `verifyOTP` (email path) or OAuth new-user branch  |
-| `storageLimit`          | Number   | yes                       | `1 GB`    | Per-user storage quota in bytes (`1 * 1000 * 1000 * 1000`). **Not** in the Atlas validator's `required` array — the Mongoose default guarantees presence on every ORM write, and listing it would reject pre-field docs. Enforced on upload (PR #66); see `../file/file-upload.md` |
+| `storageLimit`          | Number   | yes                       | `1 GB`    | Per-user storage quota in bytes (`1 * 1000 * 1000 * 1000`). **Not** in the Atlas validator's `required` array — the Mongoose default guarantees presence on every ORM write, so requiring it is redundant. Enforced on upload; see `../file/file-upload.md` |
 | `profilePicture`        | String   | no                        | `null`    | Populated from OAuth profile; nullable in both Mongoose+Atlas |
 | `provider`              | String   | yes                       | `"email"` | Enum `["email", "google", "github"]`. Immutable via pre-save  |
 | `otp`                   | String   | no                        | —         | `select: false`, hashed                                       |
@@ -103,8 +103,9 @@ Source: `src/models/directory.model.js`. Atlas mirror: `src/schemas/directories.
 | `name`                  | String   | yes      | —       | `trim`, `minlength: 3`, `maxlength: 50`       |
 | `parentDirId`           | ObjectId | no       | `null`  | `null` means this document is a user's root   |
 | `userId`                | ObjectId | yes      | —       | Owning user                                   |
-| `size`                  | Number   | yes      | `0`     | Denormalized total bytes of this directory's whole subtree. Maintained incrementally via `adjustAncestorStats` inside the upload/delete transactions (PR #62), so listings read it directly instead of aggregating. **No Mongoose `min`** — `$inc` bypasses validators, so the underflow guard is the Atlas `minimum: 0`. |
+| `size`                  | Number   | yes      | `0`     | Denormalized total bytes of this directory's whole subtree. Maintained incrementally via `updateAncestorDirectoryStats` inside the upload/delete transactions, so listings read it directly instead of aggregating. **No Mongoose `min`** — `$inc` bypasses validators, so the underflow guard is the Atlas `minimum: 0`. |
 | `fileCount`             | Number   | yes      | `0`     | Denormalized total file count of the subtree. Same maintenance + Atlas-only underflow guard as `size`. |
+| `folderCount`           | Number   | yes      | `0`     | Denormalized count of all folders nested in the subtree (excludes itself). Maintained via `updateAncestorDirectoryStats` inside the create/delete transactions. Same Atlas-only underflow guard as `size`. |
 | `createdAt`/`updatedAt` | Date     | —        | —       | Via `timestamps: true`                        |
 
 **Indexes**
@@ -125,7 +126,7 @@ Source: `src/models/file.model.js`. Atlas mirror: `src/schemas/files.schema.js`.
 | ----------------------- | -------- | -------- | ------- | ----------------------------------------------- |
 | `name`                  | String   | yes      | —       | `trim`, `minlength: 3`. No max enforced yet     |
 | `extension`             | String   | yes      | —       | `trim`, `lowercase`. Stored separately          |
-| `size`                  | Number   | yes      | —       | Bytes. `min: 0`. Set by the byte counter inside `uploadFile` (PR #22). Source for `file.size` in API responses; each upload/delete also folds this into the denormalized `Directory.size`/`fileCount` totals (PR #62). |
+| `size`                  | Number   | yes      | —       | Bytes. `min: 0`. Set by the byte counter inside `uploadFile`. Source for `file.size` in API responses; each upload/delete also folds this into the denormalized `Directory.size`/`fileCount` totals. |
 | `parentDirId`           | ObjectId | yes      | —       | The containing directory                        |
 | `userId`                | ObjectId | yes      | —       | Owning user (denormalized for cheap auth)       |
 | `createdAt`/`updatedAt` | Date     | —        | —       | Via `timestamps: true`                          |
@@ -199,7 +200,7 @@ Three collections (`users`, `directories`, `files`) have Atlas-side `$jsonSchema
 
 **The mirror has to track the Mongoose schema exactly.** We learned this the hard way during the OAuth rollout: Mongoose had `profilePicture: { default: null }`, but Atlas required `bsonType: "string"`. OAuth inserts failed with `Document failed validation` until the Atlas validator was widened to `bsonType: ["string", "null"]`. Any schema change must be applied to both files.
 
-**Deploy ordering is load-bearing for the strict `directories` validator.** That validator is `additionalProperties: false`, so when PR #62 added `size`/`fileCount` to the Directory model, the Atlas validator had to gain them **before** the code deploys — otherwise every directory write (root-dir creation on signup, `createDirectory`) is rejected with `Document failed validation`. The two fields are added to `properties` with `minimum: 0` but are **not** in `required` (legacy rows predate them; the Mongoose `default: 0` covers all app writes). That `minimum: 0` is also the *only* underflow guard for the denormalized counters, since `$inc` (used by `adjustAncestorStats`) bypasses Mongoose validators entirely — so the validator must be live in production for the guard to exist at all.
+**Deploy ordering is load-bearing for the strict `directories` validator.** That validator is `additionalProperties: false`, so when the Directory model gained `size`/`fileCount` (and later `folderCount`), the Atlas validator had to gain them **before** the code deploys — otherwise every directory write (root-dir creation on signup, `createDirectory`) is rejected with `Document failed validation`. These fields are added to `properties` with `minimum: 0` but are **not** in `required` — the Mongoose `default: 0` guarantees presence on every app write, so requiring them is redundant. That `minimum: 0` is also the *only* underflow guard for the denormalized counters, since `$inc` (used by `updateAncestorDirectoryStats`) bypasses Mongoose validators entirely — so the validator must be live in production for the guard to exist at all.
 
 The `sessions` collection has no Atlas validator — session writes happen exclusively through Mongoose, and the collection churn is high enough that the extra validation pass didn't earn its keep.
 
