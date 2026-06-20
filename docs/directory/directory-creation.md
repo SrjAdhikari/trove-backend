@@ -32,7 +32,7 @@ The Directory creation logic adheres to the Controller-Service pattern, with aut
 - **Service Logic (`createDirectory`):**
   1. Queries `Directory.findOne({ _id: parentDirId, userId })` to verify the parent directory exists and belongs to the authenticated user.
   2. If no document matches, throws `AppError` with `NOT_FOUND` and `DIRECTORY_NOT_FOUND`.
-  3. Inside a `session.withTransaction()`: creates the new directory via `Directory.create([{ name, parentDirId, userId, ancestorIds }], { session })`, then calls `updateAncestorDirectoryStats(parentDirId, { folders: 1 }, session)` to increment the denormalized `folderCount` of every ancestor folder. The walk starts at the parent, so the new folder's own `folderCount` stays at the schema default `0`. Added in PR #69.
+  3. Inside a `session.withTransaction()`: creates the new directory via `Directory.create([{ name, parentDirId, userId, ancestorIds }], { session })`, then calls `updateAncestorDirectoryStats(parentDirId, { folders: 1 }, session)` to increment the denormalized `folderCount` of every ancestor folder. The walk starts at the parent, so the new folder's own `folderCount` stays at the schema default `0`.
   4. Returns the created directory document (with `size`, `fileCount`, and `folderCount` all `0`).
 
 - **Response:**

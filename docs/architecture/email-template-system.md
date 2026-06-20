@@ -1,6 +1,6 @@
 # Email Template System
 
-> **Status:** As-built (2026-04-30). Reflects the structure introduced in PR #18 and the password-reset wiring added in PR #25.
+> **Status:** As-built (2026-04-30). Reflects the current email-template structure and the password-reset wiring.
 
 Describes how transactional emails (OTP verification, password reset, security alerts, etc.) are composed and dispatched. Read this before adding a new email template, or when curious why a particular styling choice was made.
 
@@ -158,7 +158,7 @@ Patterns that work everywhere, and gotchas worth knowing:
 - **Always include `width` and `height` attributes on `<img>`.** Outlook needs them as HTML attributes, not just CSS. Always include `alt="..."` so the email reads sensibly when images are blocked (Gmail blocks images by default until the user clicks "Display images below").
 - **Preheader span needs multiple hiding tricks.** The hidden preheader uses `display: none; font-size: 1px; max-height: 0; opacity: 0; overflow: hidden;`. Different clients respect different properties — using all of them is the industry-standard belt-and-suspenders.
 - **Avoid background images.** Many clients strip them. Use solid colors for backgrounds.
-- **Buttons render unreliably.** If a future template needs a CTA button, render it as a styled `<a>` inside a centered `<div>`, never as `<button>`. (The template system already includes a `primaryButton` component pattern for this — see git history of PR #18 for the temporary version, removed when the OTP-based password reset replaced the link-based one.)
+- **Buttons render unreliably.** If a future template needs a CTA button, render it as a styled `<a>` inside a centered `<div>`, never as `<button>`. (The template system already includes a `primaryButton` component pattern for this — see git history for the temporary version, removed when the OTP-based password reset replaced the link-based one.)
 - **Dark-mode auto-inversion.** Some clients (Apple Mail in dark mode, Outlook) auto-invert white backgrounds. The current light theme is robust to this. If you ever ship a dark-themed email, test in multiple clients first.
 
 ---
@@ -179,7 +179,7 @@ Patterns that work everywhere, and gotchas worth knowing:
 | Template                          | Wired? | Call site                                                                                  |
 | --------------------------------- | ------ | ------------------------------------------------------------------------------------------ |
 | `VERIFY_EMAIL_TEMPLATE`           | ✅     | `otp.service.js` `sendOTP` (register, resend)                                              |
-| `PASSWORD_RESET_EMAIL_TEMPLATE`   | ✅     | `otp.service.js` `sendPasswordResetOTP` (forgot-password, since PR #25)                    |
+| `PASSWORD_RESET_EMAIL_TEMPLATE`   | ✅     | `otp.service.js` `sendPasswordResetOTP` (forgot-password)                                  |
 | `NEW_DEVICE_ALERT_EMAIL_TEMPLATE` | ⏳     | No call site yet — awaits new-device detection in `enforceDeviceLimit` or session creation |
 
 ### Required env vars (consumed by `sendEmail.js`, not the templates)

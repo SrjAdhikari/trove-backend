@@ -1,6 +1,6 @@
 # Google Drive Import
 
-> **Status:** As-built (2026-04-25, shipped in PR #21). The `POST /api/drive/import` endpoint is live. Request-body validation was moved from inline controller checks to a Zod schema (`importDriveSchema`, `validateBody`) in PR #44 (2026-05-28) — malformed input now returns `400 VALIDATION_ERROR` instead of `INVALID_INPUT` / `INVALID_DRIVE_TOKEN`. The design below matches the current implementation; refresh when behavior changes.
+> **Status:** As-built (2026-04-25). The `POST /api/drive/import` endpoint is live. Request-body validation was moved from inline controller checks to a Zod schema (`importDriveSchema`, `validateBody`) on 2026-05-28 — malformed input now returns `400 VALIDATION_ERROR` instead of `INVALID_INPUT` / `INVALID_DRIVE_TOKEN`. The design below matches the current implementation; refresh when behavior changes.
 
 Lets a signed-in user pick files and folders from their Google Drive and copy them into TroveCloud, preserving the folder hierarchy. One-shot, selective import — not a persistent Drive sync.
 
@@ -126,7 +126,7 @@ Internal helpers:
 
 **Streaming to disk:** Drive's response body arrives as a Web ReadableStream. It is wrapped in a `Transform` that counts bytes and aborts the pipeline when the post-hoc total exceeds the per-file cap — necessary because Google-native `export` responses have no pre-flight `size`. The counter-wrapped Readable is then passed to the existing `uploadFile(parentDirId, userId, displayName, readable)` in `src/services/file.service.js`, which already handles the DB row creation, disk write, and rollback on pipeline failure.
 
-**`src/validators/drive.validator.js`** — request-body validation (PR #44).
+**`src/validators/drive.validator.js`** — request-body validation.
 
 Exports `importDriveSchema`, consumed via `validateBody(importDriveSchema)` at the route. It enforces, before the handler runs:
 

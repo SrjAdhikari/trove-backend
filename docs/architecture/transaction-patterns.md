@@ -1,6 +1,6 @@
 # Transaction Patterns
 
-> **Status:** As-built (2026-06-14). Documents the MongoDB transaction usage adopted in PRs #11 (Google OAuth), #14 (shared OAuth helper), #25 (password reset), #33 (admin suspend / soft-delete / hard-delete), #62 (denormalized folder-size maintenance), #66 (per-user storage-quota check on upload), and #69 (recursive folder-count maintenance + helper rename). Used in `verifyOTP` since the original auth implementation.
+> **Status:** As-built (2026-06-14). Documents the MongoDB transaction usage across the codebase: Google OAuth, the shared OAuth helper, password reset, admin suspend / soft-delete / hard-delete, denormalized folder-size maintenance, the per-user storage-quota check on upload, and recursive folder-count maintenance. Used in `verifyOTP` since the original auth implementation.
 
 Captures a subtle pattern that recurs across the codebase: when a flow needs to **atomically commit two or more cross-document writes** (User + Directory creation, User update + Session wipe, multi-collection user purge, a file write + its ancestor folder-counter updates), the database writes happen inside a `withTransaction` block. Where a flow also issues a `Session`, that **`Session.create` happens outside the transaction**. Where a flow also performs non-idempotent side effects on disk, **those happen outside the transaction too**. This document explains why, and what to do if a new call site needs the same shape.
 
@@ -113,11 +113,11 @@ try {
 }
 ```
 
-If `Session.deleteMany` fails after `user.save`, the whole thing rolls back — the password change is reverted and the OTP fields stay populated, so the user can retry the same call cleanly with the same code. Without the transaction, a partial failure would leave the password updated but old sessions alive and the OTP consumed — a worse recovery story for the user. See PR #25 for the design discussion.
+If `Session.deleteMany` fails after `user.save`, the whole thing rolls back — the password change is reverted and the OTP fields stay populated, so the user can retry the same call cleanly with the same code. Without the transaction, a partial failure would leave the password updated but old sessions alive and the OTP consumed — a worse recovery story for the user.
 
 ### 4. `suspendUser` in `src/services/admin/user.service.js`
 
-Setting `suspendedAt = now` and revoking every active session for the target need to land together — a half-applied suspension where the timestamp is set but the user's existing sessions stay alive would leave the locked-out user temporarily able to use the app until those sessions expire on their own. Same shape as `resetPassword`: `user.save({ session })` plus `Session.deleteMany({ userId }, { session })`. Shipped in PR #33.
+Setting `suspendedAt = now` and revoking every active session for the target need to land together — a half-applied suspension where the timestamp is set but the user's existing sessions stay alive would leave the locked-out user temporarily able to use the app until those sessions expire on their own. Same shape as `resetPassword`: `user.save({ session })` plus `Session.deleteMany({ userId }, { session })`.
 
 ### 5. `softDeleteUser` in `src/services/admin/user.service.js`
 
@@ -127,20 +127,20 @@ Mirror image of suspend: set `deletedAt = now` and `Session.deleteMany` for the 
 
 The widest transaction in the codebase — a four-collection wipe (`Session.deleteMany` → `File.deleteMany` → `Directory.deleteMany` → `User.deleteOne`) all keyed by `userId`. Inside the same transaction, a pre-read `File.find(..., '_id extension')` snapshots the list of physical files to remove; that list is captured into a closure variable.
 
-**Physical-file cleanup happens outside the transaction** via `Promise.allSettled(filesToWipe.map(file => rm(...)))`. Same reasoning as Session.create being outside: `rm` is a non-idempotent side effect against the filesystem, and `withTransaction`'s automatic retries would re-issue the deletes on a `WriteConflict`. `allSettled` ensures one disk failure doesn't stop the other deletes from running; rejected promises are warn-logged but never re-thrown — the DB is the source of truth and orphaned bytes are reconcilable later. Shipped in PR #33.
+**Physical-file cleanup happens outside the transaction** via `Promise.allSettled(filesToWipe.map(file => rm(...)))`. Same reasoning as Session.create being outside: `rm` is a non-idempotent side effect against the filesystem, and `withTransaction`'s automatic retries would re-issue the deletes on a `WriteConflict`. `allSettled` ensures one disk failure doesn't stop the other deletes from running; rejected promises are warn-logged but never re-thrown — the DB is the source of truth and orphaned bytes are reconcilable later.
 
 ### 7. Folder-stats maintenance in `src/services/file.service.js` and `src/services/directory.service.js`
 
-Shipped in PR #62 (folder count added in PR #69). Every directory stores denormalized `size`/`fileCount`/`folderCount` for its whole subtree, kept correct on each write inside a transaction. The shared primitive is `updateAncestorDirectoryStats(startDirId, { bytes, files, folders }, session)` in `directory.service.js` (renamed from `adjustAncestorStats` in PR #69), which walks the `parentDirId` chain to the root and `$inc`s each ancestor:
+Every directory stores denormalized `size`/`fileCount`/`folderCount` for its whole subtree, kept correct on each write inside a transaction. The shared primitive is `updateAncestorDirectoryStats(startDirId, { bytes, files, folders }, session)` in `directory.service.js` (renamed from `adjustAncestorStats`), which walks the `parentDirId` chain to the root and `$inc`s each ancestor:
 
 - **`uploadFile`** mints the file `_id` up front, streams the bytes to disk **outside** the transaction (a non-retryable side effect — on stream failure the partial file is `rm`'d and no DB row was created yet), then inside the transaction does `File.create([{ _id, size, ... }], { session })` plus `updateAncestorDirectoryStats(parentDirId, { bytes, files: 1 }, session)`. Retry-safe for the same reason as the User+Directory pattern: the fixed `_id` and the constant delta re-apply cleanly after a `WriteConflict` rollback.
 - **`deleteFile`** does `File.deleteOne({ _id, userId }, { session })` plus the inverse `updateAncestorDirectoryStats(parentDirId, { bytes: -size, files: -1 }, session)` inside the transaction; the physical `rm` happens **after** commit (DB is the source of truth — same "side effects outside" rule).
 - **`deleteDirectory`**'s existing delete transaction gained one more in-transaction step: `updateAncestorDirectoryStats(rootDir.parentDirId, { bytes: -rootDir.size, files: -rootDir.fileCount, folders: -allDirIds.length }, session)`, subtracting the deleted subtree's stored totals (bytes, file count, and folder count) from every ancestor above it.
-- **`createDirectory`** (PR #69) became transactional: it inserts the new folder with `Directory.create([{ ... }], { session })` and pairs it with `updateAncestorDirectoryStats(parentDirId, { folders: 1 }, session)`, bumping every ancestor's `folderCount`. The walk starts at the parent, so the new folder's own `folderCount` stays at the schema default `0`. It does no disk I/O, so nothing sits outside the transaction.
+- **`createDirectory`** became transactional: it inserts the new folder with `Directory.create([{ ... }], { session })` and pairs it with `updateAncestorDirectoryStats(parentDirId, { folders: 1 }, session)`, bumping every ancestor's `folderCount`. The walk starts at the parent, so the new folder's own `folderCount` stays at the schema default `0`. It does no disk I/O, so nothing sits outside the transaction.
 
 `updateAncestorDirectoryStats` is intentionally **not** `userId`-scoped: every `parentDirId` points to a same-user directory by construction (`createDirectory` verifies ownership before linking; there is no move/re-parent feature), so the ancestor walk cannot cross tenants.
 
-The call sites are **structurally similar but not identical**. `verifyOTP`, `resetPassword`, `suspendUser`, and `softDeleteUser` all mutate an existing user; OAuth new-user creates a fresh one; `hardDeleteUser` is the multi-collection variant that also performs irreversible disk work outside the transaction; the PR #62 folder-size sites pair a single `File` write/delete with a multi-document `$inc` across the ancestor chain, again keeping disk I/O (stream-before / `rm`-after) outside. The "Session.create outside" and "filesystem cleanup outside" rules are the same principle — anything that isn't safely retry-able stays out. A premature abstraction extracting them into a single helper would have to branch on "create vs update", "single vs cross-collection", and "with vs without external side effects" inside, which is exactly the kind of false-DRY that makes code worse. The pattern is documented; the call sites stay separate.
+The call sites are **structurally similar but not identical**. `verifyOTP`, `resetPassword`, `suspendUser`, and `softDeleteUser` all mutate an existing user; OAuth new-user creates a fresh one; `hardDeleteUser` is the multi-collection variant that also performs irreversible disk work outside the transaction; the folder-size sites pair a single `File` write/delete with a multi-document `$inc` across the ancestor chain, again keeping disk I/O (stream-before / `rm`-after) outside. The "Session.create outside" and "filesystem cleanup outside" rules are the same principle — anything that isn't safely retry-able stays out. A premature abstraction extracting them into a single helper would have to branch on "create vs update", "single vs cross-collection", and "with vs without external side effects" inside, which is exactly the kind of false-DRY that makes code worse. The pattern is documented; the call sites stay separate.
 
 ---
 
@@ -169,14 +169,14 @@ A few details worth knowing if you're new to MongoDB transactions in Mongoose:
 ### Current call sites
 
 - `src/services/auth.service.js` — `verifyOTP` (since project inception)
-- `src/services/oauth.service.js` — `loginOrCreateOAuthUser` new-user branch (since PR #14, originally PR #11)
-- `src/services/auth.service.js` — `resetPassword` (since PR #25; password update + session wipe atomic)
-- `src/services/admin/user.service.js` — `suspendUser` (since PR #33; suspendedAt + session wipe atomic)
-- `src/services/admin/user.service.js` — `softDeleteUser` (since PR #33; deletedAt + session wipe atomic)
-- `src/services/admin/user.service.js` — `hardDeleteUser` (since PR #33; multi-collection wipe inside the transaction, disk-file cleanup outside via `Promise.allSettled`)
-- `src/services/directory.service.js` — `createDirectory` (since PR #69; inserts the new folder + an ancestor `folderCount` `$inc` inside the transaction)
-- `src/services/directory.service.js` — recursive directory delete (separate pattern; transaction wraps DB deletes + an `updateAncestorDirectoryStats` ancestor decrement since PR #62, physical-file cleanup happens outside via `Promise.allSettled`)
-- `src/services/file.service.js` — `uploadFile` and `deleteFile` (since PR #62; a `File` create/delete plus an `updateAncestorDirectoryStats` ancestor `$inc` inside the transaction, with disk I/O kept outside — stream-before on upload, `rm`-after on delete). Since PR #66, `uploadFile` also reads the root-directory `size` and enforces the per-user storage quota inside the same transaction — because that quota read shares the root doc the ancestor `$inc` writes, two concurrent uploads write-conflict on it and `withTransaction` retries the loser against the fresh size, so the cap holds without an explicit lock.
+- `src/services/oauth.service.js` — `loginOrCreateOAuthUser` new-user branch
+- `src/services/auth.service.js` — `resetPassword` (password update + session wipe atomic)
+- `src/services/admin/user.service.js` — `suspendUser` (suspendedAt + session wipe atomic)
+- `src/services/admin/user.service.js` — `softDeleteUser` (deletedAt + session wipe atomic)
+- `src/services/admin/user.service.js` — `hardDeleteUser` (multi-collection wipe inside the transaction, disk-file cleanup outside via `Promise.allSettled`)
+- `src/services/directory.service.js` — `createDirectory` (inserts the new folder + an ancestor `folderCount` `$inc` inside the transaction)
+- `src/services/directory.service.js` — recursive directory delete (separate pattern; transaction wraps DB deletes + an `updateAncestorDirectoryStats` ancestor decrement, physical-file cleanup happens outside via `Promise.allSettled`)
+- `src/services/file.service.js` — `uploadFile` and `deleteFile` (a `File` create/delete plus an `updateAncestorDirectoryStats` ancestor `$inc` inside the transaction, with disk I/O kept outside — stream-before on upload, `rm`-after on delete). `uploadFile` also reads the root-directory `size` and enforces the per-user storage quota inside the same transaction — because that quota read shares the root doc the ancestor `$inc` writes, two concurrent uploads write-conflict on it and `withTransaction` retries the loser against the fresh size, so the cap holds without an explicit lock.
 
 ### Deployment requirement
 

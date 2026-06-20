@@ -1,13 +1,13 @@
 # Storage Usage & Quota
 
-> **Status:** As-built (2026-06-14). Per-user storage quota + the usage-breakdown endpoint, shipped in PR #66.
+> **Status:** As-built (2026-06-14). Per-user storage quota + the usage-breakdown endpoint.
 
 This document covers the per-user storage quota: where the limit lives, how usage is read, how the quota is enforced on upload, and the `GET /api/storage/usage` endpoint that powers the frontend's sidebar storage bar and settings storage tab.
 
 ## 🏗️ Architecture
 
 - **Quota storage** — the limit is a field on the user (`User.storageLimit`, `src/models/user.model.js`), defaulting to **1 GB** (`DEFAULT_STORAGE_LIMIT = 1 * 1000 * 1000 * 1000`, decimal, matching the per-file cap convention). It is per-user, so an admin can raise it on a single account later.
-- **Usage source** — usage is **not** stored separately. It is read from the denormalized root-directory `size` (the whole-subtree byte total maintained inside the upload/delete transactions since PR #62 — see `./transaction-patterns.md`). This makes "bytes used" an O(1) read of one document.
+- **Usage source** — usage is **not** stored separately. It is read from the denormalized root-directory `size` (the whole-subtree byte total maintained inside the upload/delete transactions — see `./transaction-patterns.md`). This makes "bytes used" an O(1) read of one document.
 - **Controller (`src/controllers/storage.controller.js`)** — `getStorageUsageHandler` extracts `req.user._id` and `req.user.storageLimit` (the limit rides on the session-populated user, so no extra DB read) and delegates to the service.
 - **Service (`src/services/storage.service.js`)** — `getStorageUsage(userId, totalStorageLimit)` reads the root size, scans the user's files for the category breakdown, and returns the response shape. No HTTP concerns.
 - **Category helper (`src/utils/fileCategories.js`)** — `categorizeExtension(ext)` maps a file extension to one of `Documents` / `Images` / `Videos` / `Audio` / `Archives` / `Other`; `CATEGORY_ICONS` maps each category to a Lucide icon name for the frontend.

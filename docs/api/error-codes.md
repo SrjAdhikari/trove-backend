@@ -125,7 +125,7 @@ Returned by the `/api/users/profile-picture` endpoints (authenticated upload/rep
 | Code                  | Typical HTTP | Meaning                                                                                                       | Where thrown                                                       |
 | --------------------- | ------------ | ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
 | `INTERNAL_ERROR`      | 500          | Catch-all for unexpected errors. Sets `isOperational: false` so the original message is hidden in production. | `globalErrorHandler` fallback when no other handler matches        |
-| `INVALID_INPUT`       | 400          | A file-upload filename header couldn't be URL-decoded, or an admin action was rejected because the target's lifecycle state precludes it (e.g., suspending an already-suspended user, restoring a user who is not soft-deleted, unknown role/status filter). _(Directory / file-rename / drive-import body validation now returns `VALIDATION_ERROR` — moved to Zod in PR #44.)_ | `uploadFileHandler` in `file.controller.js` (filename-header decode); state-guard branches across the admin mutation handlers in `src/services/admin/user.service.js` |
+| `INVALID_INPUT`       | 400          | A file-upload filename header couldn't be URL-decoded, or an admin action was rejected because the target's lifecycle state precludes it (e.g., suspending an already-suspended user, restoring a user who is not soft-deleted, unknown role/status filter). _(Directory / file-rename / drive-import body validation now returns `VALIDATION_ERROR` — moved to Zod.)_ | `uploadFileHandler` in `file.controller.js` (filename-header decode); state-guard branches across the admin mutation handlers in `src/services/admin/user.service.js` |
 | `RATE_LIMITED`        | 429          | Request exceeded a rate limit. Routed through `globalErrorHandler` as the standard envelope; responses also carry `RateLimit-*` headers.                       | The `handler` in `src/middlewares/rateLimit.middleware.js` — the global backstop or any per-tier limiter (auth/oauth/publicRead/read/mutation/destructive/hardDelete/upload/drive) |
 | `ROUTE_NOT_FOUND`     | 404          | Requested URL didn't match any registered route.                                                              | 404 handler in `app.js`                                            |
 
@@ -139,7 +139,7 @@ Returned by `POST /api/drive/import`. Most appear inside the `failed[]` array of
 | `DRIVE_IMPORT_FAILED`         | failed[]     | Generic Drive failure — quota, network, JSON parse, or any other unmapped error.                     | `googleDrive.js` and `drive.service.js` per-item catch                                      |
 | `DRIVE_IMPORT_LIMIT_EXCEEDED` | failed[]     | Per-file size cap (100 MB) or aggregate cap (500 MB) tripped during streaming.                       | `streamFileIntoTrove` in `drive.service.js` (pre-flight + post-hoc byte counter)            |
 | `DRIVE_ITEM_NOT_FOUND`        | failed[]     | Drive returned 404, or the item was trashed when re-fetched.                                         | `googleDrive.js` (404 mapping); `importItem` in `drive.service.js` (trashed check)          |
-| `INVALID_DRIVE_TOKEN`         | failed[]     | Drive returned `401` for the access token (expired / invalid) while fetching an item. A missing or malformed `accessToken` body field is now rejected upstream as `VALIDATION_ERROR` (PR #44), so this code only appears per-item in `failed[]`. | `googleDrive.js` (401 mapping), surfaced per-item by `drive.service.js` |
+| `INVALID_DRIVE_TOKEN`         | failed[]     | Drive returned `401` for the access token (expired / invalid) while fetching an item. A missing or malformed `accessToken` body field is now rejected upstream as `VALIDATION_ERROR`, so this code only appears per-item in `failed[]`. | `googleDrive.js` (401 mapping), surfaced per-item by `drive.service.js` |
 | `UNSUPPORTED_DRIVE_TYPE`      | failed[]     | Picked item is a Shortcut, or a Google-native type without an export mapping (Forms, Drawings, etc.). | `importItem` in `drive.service.js`                                                          |
 
 ---
@@ -208,6 +208,6 @@ Frontend code should always switch on `code` to drive UI behavior. Never parse `
 
 ### Deferred / planned codes
 
-_None currently._ Rate limiting shipped in PR #54 as `RATE_LIMITED` (429) — see the **General** group above. The earlier placeholder name `RATE_LIMIT_EXCEEDED` was not used.
+_None currently._ Rate limiting shipped as `RATE_LIMITED` (429) — see the **General** group above. The earlier placeholder name `RATE_LIMIT_EXCEEDED` was not used.
 
 ---
