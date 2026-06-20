@@ -520,3 +520,64 @@ describe("getDirectory breadcrumb + path", () => {
 		expect(childView.ancestorIds).toBeUndefined();
 	});
 });
+
+describe("getDirectory masks the stored root name", () => {
+	// Production stores the root as `root-<email>`; the response must never
+	// leak the email or the internal naming convention.
+	const LEAKY_ROOT_NAME = "root-leak@example.com";
+
+	it("masks the root name as 'My Files' in name, breadcrumb, and path when viewing the root", async () => {
+		const user = await createTestUser();
+		const root = await createTestDirectory(user._id, { name: LEAKY_ROOT_NAME });
+
+		const data = await getDirectory(root._id, user._id);
+
+		expect(data.name).toBe("My Files");
+		expect(data.breadcrumb.map((c) => c.name)).toEqual(["My Files"]);
+		expect(data.path).toBe("/My Files");
+
+		const serialized = JSON.stringify(data);
+		expect(serialized).not.toContain(LEAKY_ROOT_NAME);
+		expect(serialized).not.toContain("leak@example.com");
+	});
+
+	it("masks only the root crumb in a deep view, preserving descendant names (worst case)", async () => {
+		const user = await createTestUser();
+		const root = await createTestDirectory(user._id, { name: LEAKY_ROOT_NAME });
+		const docs = await createTestDirectory(user._id, {
+			name: "Documents",
+			parentDirId: root._id,
+		});
+		const reports = await createTestDirectory(user._id, {
+			name: "Reports",
+			parentDirId: docs._id,
+		});
+
+		const data = await getDirectory(reports._id, user._id);
+
+		expect(data.name).toBe("Reports");
+		expect(data.breadcrumb.map((c) => c.name)).toEqual([
+			"My Files",
+			"Documents",
+			"Reports",
+		]);
+		expect(data.path).toBe("/My Files/Documents/Reports");
+		expect(JSON.stringify(data)).not.toContain(LEAKY_ROOT_NAME);
+	});
+
+	it("masks the root crumb but not a direct child (boundary: breadcrumb length 2)", async () => {
+		const user = await createTestUser();
+		const root = await createTestDirectory(user._id, { name: LEAKY_ROOT_NAME });
+		const child = await createTestDirectory(user._id, {
+			name: "Documents",
+			parentDirId: root._id,
+		});
+
+		const data = await getDirectory(child._id, user._id);
+
+		expect(data.name).toBe("Documents");
+		expect(data.breadcrumb.map((c) => c.name)).toEqual(["My Files", "Documents"]);
+		expect(data.path).toBe("/My Files/Documents");
+		expect(JSON.stringify(data)).not.toContain(LEAKY_ROOT_NAME);
+	});
+});

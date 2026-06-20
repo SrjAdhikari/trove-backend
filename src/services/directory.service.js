@@ -17,6 +17,9 @@ const {
 	DIRECTORY_DELETE_FAILED,
 } = appErrorCode;
 
+// User-facing label for the root directory, which is stored as `root-<email>`.
+const ROOT_DISPLAY_NAME = "My Files";
+
 /**
  * Retrieves a directory with its immediate files and child folders, recursive
  * `fileCount`, `folderCount` + `totalSize` for the directory itself and each
@@ -45,6 +48,8 @@ const getDirectory = async (directoryId, userId) => {
 	]);
 
 	const breadcrumb = generateBreadCrumb(ancestors, directory);
+	if (breadcrumb.length) breadcrumb[0].name = ROOT_DISPLAY_NAME;
+
 	const path = generatePath(breadcrumb);
 
 	// Expose the stored subtree size as `totalSize`; drop the raw `size` and the
@@ -58,6 +63,7 @@ const getDirectory = async (directoryId, userId) => {
 	const { size, ancestorIds, ...directoryView } = directory;
 	return {
 		...directoryView,
+		name: directory.parentDirId ? directory.name : ROOT_DISPLAY_NAME,
 		totalSize: size,
 		breadcrumb,
 		path,
