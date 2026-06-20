@@ -30,7 +30,7 @@ The File deletion logic adheres to the Controller-Service pattern, with authenti
   1. Queries `File.findOne({ _id: fileId, userId }).lean()` to fetch the file with ownership verification.
   2. If no document matches, throws `AppError` with `NOT_FOUND` and `FILE_NOT_FOUND`.
   3. Constructs the physical storage path: `STORAGE_ROOT/<fileId><extension>`.
-  4. **Atomic DB delete (transaction):** Inside `withTransaction`, runs `File.deleteOne({ _id, userId }, { session })` plus `adjustAncestorStats(file.parentDirId, { bytes: -file.size, files: -1 }, session)` — decrementing the parent folder and every ancestor's denormalized `size`/`fileCount` (PR #62). `endSession()` runs in `finally`.
+  4. **Atomic DB delete (transaction):** Inside `withTransaction`, runs `File.deleteOne({ _id, userId }, { session })` plus `updateAncestorDirectoryStats(file.parentDirId, { bytes: -file.size, files: -1 }, session)` — decrementing the parent folder and every ancestor's denormalized `size`/`fileCount` (PR #62). `endSession()` runs in `finally`.
   5. **Physical removal after commit:** Once the transaction commits, removes the on-disk file with `rm(filePath, { force: true })` — a non-retryable side effect kept outside the transaction; `{ force: true }` so a missing file doesn't throw.
   6. Returns the deleted file document (captured before deletion).
 
@@ -58,7 +58,7 @@ The File deletion logic adheres to the Controller-Service pattern, with authenti
 
 ### Transactional DB Delete, Then Physical Removal
 
-PR #62 made the DB delete transactional: `File.deleteOne` and the `adjustAncestorStats` ancestor decrement run together inside `withTransaction`, so a file row can never disappear while its bytes stay counted in ancestor folder sizes (or vice versa). The physical `rm` happens **after** the transaction commits — the DB is the source of truth, and disk I/O is a non-retryable side effect that must stay outside the transaction (the same rule `uploadFile` and `deleteDirectory` follow).
+PR #62 made the DB delete transactional: `File.deleteOne` and the `updateAncestorDirectoryStats` ancestor decrement run together inside `withTransaction`, so a file row can never disappear while its bytes stay counted in ancestor folder sizes (or vice versa). The physical `rm` happens **after** the transaction commits — the DB is the source of truth, and disk I/O is a non-retryable side effect that must stay outside the transaction (the same rule `uploadFile` and `deleteDirectory` follow).
 
 ### `{ force: true }` on `rm()`
 

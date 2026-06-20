@@ -33,7 +33,7 @@ The Directory retrieval logic adheres to the Controller-Service pattern, with au
   2. If no document matches, throws `AppError` with `NOT_FOUND` and `DIRECTORY_NOT_FOUND`.
   3. **Concurrent batch (3-way `Promise.all`):**
      - `File.find({ parentDirId, userId })` — files directly inside the requested directory.
-     - `Directory.find({ parentDirId, userId })` — immediate child folders (each carries its own stored `size`/`fileCount`).
+     - `Directory.find({ parentDirId, userId })` — immediate child folders (each carries its own stored `size`/`fileCount`/`folderCount`).
      - `resolveDirectoryNames(directory.ancestorIds, userId)` — resolves the directory's stored ancestor IDs (root → immediate parent) into `{ _id, name }` via a single indexed `$in` (no aggregation).
   4. **Stored subtree stats (no aggregation):** The requested directory's `size`/`fileCount` are read straight off its document, and each child folder's totals are read from its own stored `size`/`fileCount` in a synchronous `.map` — no per-child DB fanout. These fields are maintained on write (see below), so listings no longer recompute them (PR #62).
   5. **Defense-in-Depth:** Every query includes `userId` as a filter. Even though the parent directory is ownership-verified, this guards against data leaks from orphaned documents and from any future bug in move/copy operations.
@@ -52,6 +52,7 @@ The Directory retrieval logic adheres to the Controller-Service pattern, with au
       "createdAt": "...",
       "updatedAt": "...",
       "fileCount": 142,
+      "folderCount": 8,
       "totalSize": 1234567890,
       "breadcrumb": [
         { "_id": "root-dir-id", "name": "My Files" },
@@ -81,6 +82,7 @@ The Directory retrieval logic adheres to the Controller-Service pattern, with au
           "createdAt": "...",
           "updatedAt": "...",
           "fileCount": 24,
+          "folderCount": 3,
           "totalSize": 58982400
         }
       ]
@@ -88,19 +90,20 @@ The Directory retrieval logic adheres to the Controller-Service pattern, with au
   }
   ```
 
-  - `fileCount` / `totalSize` on the top-level directory cover **the whole subtree** (every file under it, recursively). Also present on each `childDirectories[]` entry, scoped to that child's own subtree. When viewing root, `breadcrumb` is just the folder itself and `path` is `"/My Files"`.
+  - `fileCount` / `folderCount` / `totalSize` on the top-level directory cover **the whole subtree** (every file and nested folder under it, recursively). Also present on each `childDirectories[]` entry, scoped to that child's own subtree. When viewing root, `breadcrumb` is just the folder itself and `path` is `"/My Files"`.
 
 ---
 
-## 🔢 Subtree Stats (denormalized `size` / `fileCount`)
+## 🔢 Subtree Stats (denormalized `size` / `fileCount` / `folderCount`)
 
-`fileCount` and `totalSize` for a directory's whole subtree are **stored on the Directory document** (as `fileCount` and `size`) and read directly — no aggregation, no per-child fanout. As of PR #62 the listing does zero extra work for stats.
+`fileCount`, `folderCount`, and `totalSize` for a directory's whole subtree are **stored on the Directory document** (as `fileCount`, `folderCount`, and `size`) and read directly — no aggregation, no per-child fanout. As of PR #62 (folder count added in PR #69) the listing does zero extra work for stats.
 
-The counters are **maintained on write, inside the same transaction as the file/directory change**, by `adjustAncestorStats(startDirId, { bytes, files }, session)` in `directory.service.js`, which walks the `parentDirId` chain from the changed directory up to the root and `$inc`s `size`/`fileCount` on every ancestor:
+The counters are **maintained on write, inside the same transaction as the file/directory change**, by `updateAncestorDirectoryStats(startDirId, { bytes, files, folders }, session)` in `directory.service.js`, which walks the `parentDirId` chain from the changed directory up to the root and `$inc`s `size`/`fileCount`/`folderCount` on every ancestor:
 
-- `uploadFile` → `+bytes, +1` on the parent chain.
-- `deleteFile` → `-bytes, -1`.
-- `deleteDirectory` → subtracts the deleted subtree's stored totals from the ancestor chain.
+- `uploadFile` → `+bytes, +1 file` on the parent chain.
+- `deleteFile` → `-bytes, -1 file`.
+- `createDirectory` → `+1 folder` on the parent chain (the new folder's own count starts at 0).
+- `deleteDirectory` → subtracts the deleted subtree's stored totals, including its folder count, from the ancestor chain.
 
 This inverts the earlier trade-off: writes now do a bounded walk up the tree, but reads are O(1) field lookups regardless of subtree size. See `../architecture/transaction-patterns.md` for the transactional shape and retry-safety, and `../architecture/database-schema.md` for the Atlas `minimum: 0` underflow guard (the Mongoose model deliberately has no `min`, since `$inc` skips validators).
 

@@ -33,7 +33,7 @@ The Directory deletion logic adheres to the Controller-Service pattern, with aut
   4. Collects all directory IDs (target + nested) into `allDirIds`.
   5. Fetches all files within those directories via `File.find({ parentDirId: { $in: allDirIds }, userId })`.
   6. **Path Validation:** Builds every physical file path via `buildFilePath`, which throws if a path escapes `STORAGE_ROOT`. This runs before any deletion, so a malicious entry aborts the entire operation before the DB transaction.
-  7. **Atomic DB Deletion:** Deletes all file and directory records within a `session.withTransaction()`, then — in the same transaction — calls `adjustAncestorStats(rootDir.parentDirId, { bytes: -rootDir.size, files: -rootDir.fileCount }, session)` to subtract the deleted subtree's denormalized totals from every ancestor folder above it (PR #62). If any step fails, all roll back together.
+  7. **Atomic DB Deletion:** Deletes all file and directory records within a `session.withTransaction()`, then — in the same transaction — calls `updateAncestorDirectoryStats(rootDir.parentDirId, { bytes: -rootDir.size, files: -rootDir.fileCount, folders: -allDirIds.length }, session)` to subtract the deleted subtree's denormalized totals — bytes, file count, and folder count — from every ancestor folder above it (PR #62; folder count added in PR #69). If any step fails, all roll back together.
   8. **Physical File Cleanup:** After successful DB transaction, deletes physical files via `Promise.allSettled()`. Failures here do not roll back the DB operation — orphaned physical files are less harmful than phantom DB records.
   9. Returns the deleted root directory document.
 
@@ -79,7 +79,7 @@ Uses MongoDB's `$graphLookup` aggregation to recursively collect all nested subd
 
 ### Atomic Transactions with `session.withTransaction()`
 
-File and directory `deleteMany` operations — plus the `adjustAncestorStats` ancestor-counter decrement added in PR #62 — run inside a single transaction. If any operation fails, all roll back, preventing partial deletes where files exist without their parent directory, or ancestor `size`/`fileCount` totals drift out of sync with what was actually removed.
+File and directory `deleteMany` operations — plus the `updateAncestorDirectoryStats` ancestor-counter decrement added in PR #62 (extended to folder count in PR #69) — run inside a single transaction. If any operation fails, all roll back, preventing partial deletes where files exist without their parent directory, or ancestor `size`/`fileCount`/`folderCount` totals drift out of sync with what was actually removed.
 
 ### Session Lifecycle Safety
 

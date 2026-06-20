@@ -55,7 +55,7 @@ This document covers the per-user storage quota: where the limit lives, how usag
 The quota is enforced in `uploadFile` (`src/services/file.service.js`) — see `../file/file-upload.md` for the full upload flow. The non-obvious parts:
 
 - **Checked inside the upload transaction.** After the bytes are streamed to disk and the final count is known, the transaction reads the current root `size` and rejects with `STORAGE_LIMIT_EXCEEDED` (400) if `usedBytes + uploadedBytes > storageLimit`, before creating the `File` row.
-- **Concurrency-safe without a lock.** The same transaction also `$inc`s the root document (via `adjustAncestorStats`). Two simultaneous uploads therefore write-conflict on the root doc; `withTransaction` retries the loser, which re-reads the now-updated `size` and re-checks — so the cap holds even under concurrent uploads. (Details in `./transaction-patterns.md`.)
+- **Concurrency-safe without a lock.** The same transaction also `$inc`s the root document (via `updateAncestorDirectoryStats`). Two simultaneous uploads therefore write-conflict on the root doc; `withTransaction` retries the loser, which re-reads the now-updated `size` and re-checks — so the cap holds even under concurrent uploads. (Details in `./transaction-patterns.md`.)
 - **Boundary:** the check uses a strict `>`, so an upload that exactly fills the quota is allowed, and a 0-byte upload at an exactly-full quota is allowed.
 
 ---
