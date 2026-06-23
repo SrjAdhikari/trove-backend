@@ -152,6 +152,7 @@ Sensitive fields are hardcoded with `select: false` at the schema level. The def
 Queries don't return these unless explicitly re-selected via `.select("+fieldName")`. That override lives **in the service layer only** — never controllers, never middleware. Current call sites:
 
 - `loginUser` — `.select("+password")` to run bcrypt-compare.
+- `changePassword` — `.select("+password")` to verify the current password before rotating it. See `docs/authentication/change-password.md`.
 - `verifyOTP` / `resendOTP` — `.select("+otp +otpExpiresAt +verificationExpiresAt")` to validate against the stored registration OTP hash.
 - `forgotPassword` / `resetPassword` — `.select("+otpExpiresAt")` (forgot, for the cooldown check) and `.select("+otp +otpExpiresAt")` (reset, for hash verification). Reuses the same `otp` / `otpExpiresAt` fields as registration; valid because verified users have those fields cleared by `verifyOTP`'s transaction. See `docs/authentication/password-reset.md` for why.
 

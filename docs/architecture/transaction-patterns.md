@@ -1,6 +1,6 @@
 # Transaction Patterns
 
-> **Status:** As-built (2026-06-14). Documents the MongoDB transaction usage across the codebase: Google OAuth, the shared OAuth helper, password reset, admin suspend / soft-delete / hard-delete, denormalized folder-size maintenance, the per-user storage-quota check on upload, and recursive folder-count maintenance. Used in `verifyOTP` since the original auth implementation.
+> **Status:** As-built (2026-06-23). Documents the MongoDB transaction usage across the codebase: Google OAuth, the shared OAuth helper, password reset, authenticated password change, admin suspend / soft-delete / hard-delete, denormalized folder-size maintenance, the per-user storage-quota check on upload, and recursive folder-count maintenance. Used in `verifyOTP` since the original auth implementation.
 
 Captures a subtle pattern that recurs across the codebase: when a flow needs to **atomically commit two or more cross-document writes** (User + Directory creation, User update + Session wipe, multi-collection user purge, a file write + its ancestor folder-counter updates), the database writes happen inside a `withTransaction` block. Where a flow also issues a `Session`, that **`Session.create` happens outside the transaction**. Where a flow also performs non-idempotent side effects on disk, **those happen outside the transaction too**. This document explains why, and what to do if a new call site needs the same shape.
 
@@ -115,21 +115,43 @@ try {
 
 If `Session.deleteMany` fails after `user.save`, the whole thing rolls back — the password change is reverted and the OTP fields stay populated, so the user can retry the same call cleanly with the same code. Without the transaction, a partial failure would leave the password updated but old sessions alive and the OTP consumed — a worse recovery story for the user.
 
-### 4. `suspendUser` in `src/services/admin/user.service.js`
+### 4. `changePassword` in `src/services/auth.service.js`
+
+The authenticated counterpart to `resetPassword`. After verifying the current password, the new password is set AND every **other** session is revoked in one transaction:
+
+```js
+const session = await mongoose.startSession();
+try {
+    await session.withTransaction(async () => {
+        user.password = newPassword;
+        await user.save({ session });
+        await Session.deleteMany(
+            { userId: user._id, _id: { $ne: currentSessionId } },
+            { session },
+        );
+    });
+} finally {
+    await session.endSession();
+}
+```
+
+The only structural difference from `resetPassword` is the `_id: { $ne: currentSessionId }` filter: the device that performed the change stays signed in, while all other sessions are wiped. Same retry-safety story — both writes are idempotent under a `WriteConflict` replay (the password re-hash and the scoped delete re-apply cleanly). See [`../authentication/change-password.md`](../authentication/change-password.md) for the surrounding flow and why the current session is preserved.
+
+### 5. `suspendUser` in `src/services/admin/user.service.js`
 
 Setting `suspendedAt = now` and revoking every active session for the target need to land together — a half-applied suspension where the timestamp is set but the user's existing sessions stay alive would leave the locked-out user temporarily able to use the app until those sessions expire on their own. Same shape as `resetPassword`: `user.save({ session })` plus `Session.deleteMany({ userId }, { session })`.
 
-### 5. `softDeleteUser` in `src/services/admin/user.service.js`
+### 6. `softDeleteUser` in `src/services/admin/user.service.js`
 
 Mirror image of suspend: set `deletedAt = now` and `Session.deleteMany` for the target in one transaction. Files and directories deliberately stay until hard-delete or restore.
 
-### 6. `hardDeleteUser` in `src/services/admin/user.service.js`
+### 7. `hardDeleteUser` in `src/services/admin/user.service.js`
 
 The widest transaction in the codebase — a four-collection wipe (`Session.deleteMany` → `File.deleteMany` → `Directory.deleteMany` → `User.deleteOne`) all keyed by `userId`. Inside the same transaction, a pre-read `File.find(..., '_id extension')` snapshots the list of physical files to remove; that list is captured into a closure variable.
 
 **Physical-file cleanup happens outside the transaction** via `Promise.allSettled(filesToWipe.map(file => rm(...)))`. Same reasoning as Session.create being outside: `rm` is a non-idempotent side effect against the filesystem, and `withTransaction`'s automatic retries would re-issue the deletes on a `WriteConflict`. `allSettled` ensures one disk failure doesn't stop the other deletes from running; rejected promises are warn-logged but never re-thrown — the DB is the source of truth and orphaned bytes are reconcilable later.
 
-### 7. Folder-stats maintenance in `src/services/file.service.js` and `src/services/directory.service.js`
+### 8. Folder-stats maintenance in `src/services/file.service.js` and `src/services/directory.service.js`
 
 Every directory stores denormalized `size`/`fileCount`/`folderCount` for its whole subtree, kept correct on each write inside a transaction. The shared primitive is `updateAncestorDirectoryStats(startDirId, { bytes, files, folders }, session)` in `directory.service.js` (renamed from `adjustAncestorStats`), which walks the `parentDirId` chain to the root and `$inc`s each ancestor:
 
@@ -140,7 +162,7 @@ Every directory stores denormalized `size`/`fileCount`/`folderCount` for its who
 
 `updateAncestorDirectoryStats` is intentionally **not** `userId`-scoped: every `parentDirId` points to a same-user directory by construction (`createDirectory` verifies ownership before linking; there is no move/re-parent feature), so the ancestor walk cannot cross tenants.
 
-The call sites are **structurally similar but not identical**. `verifyOTP`, `resetPassword`, `suspendUser`, and `softDeleteUser` all mutate an existing user; OAuth new-user creates a fresh one; `hardDeleteUser` is the multi-collection variant that also performs irreversible disk work outside the transaction; the folder-size sites pair a single `File` write/delete with a multi-document `$inc` across the ancestor chain, again keeping disk I/O (stream-before / `rm`-after) outside. The "Session.create outside" and "filesystem cleanup outside" rules are the same principle — anything that isn't safely retry-able stays out. A premature abstraction extracting them into a single helper would have to branch on "create vs update", "single vs cross-collection", and "with vs without external side effects" inside, which is exactly the kind of false-DRY that makes code worse. The pattern is documented; the call sites stay separate.
+The call sites are **structurally similar but not identical**. `verifyOTP`, `resetPassword`, `changePassword`, `suspendUser`, and `softDeleteUser` all mutate an existing user; `changePassword` adds the one variation of a **scoped** session wipe (`$ne` the current session) where the others wipe all or none; OAuth new-user creates a fresh one; `hardDeleteUser` is the multi-collection variant that also performs irreversible disk work outside the transaction; the folder-size sites pair a single `File` write/delete with a multi-document `$inc` across the ancestor chain, again keeping disk I/O (stream-before / `rm`-after) outside. The "Session.create outside" and "filesystem cleanup outside" rules are the same principle — anything that isn't safely retry-able stays out. A premature abstraction extracting them into a single helper would have to branch on "create vs update", "single vs cross-collection", and "with vs without external side effects" inside, which is exactly the kind of false-DRY that makes code worse. The pattern is documented; the call sites stay separate.
 
 ---
 
@@ -170,7 +192,8 @@ A few details worth knowing if you're new to MongoDB transactions in Mongoose:
 
 - `src/services/auth.service.js` — `verifyOTP` (since project inception)
 - `src/services/oauth.service.js` — `loginOrCreateOAuthUser` new-user branch
-- `src/services/auth.service.js` — `resetPassword` (password update + session wipe atomic)
+- `src/services/auth.service.js` — `resetPassword` (password update + full session wipe atomic)
+- `src/services/auth.service.js` — `changePassword` (password update + wipe of all **other** sessions atomic, current preserved)
 - `src/services/admin/user.service.js` — `suspendUser` (suspendedAt + session wipe atomic)
 - `src/services/admin/user.service.js` — `softDeleteUser` (deletedAt + session wipe atomic)
 - `src/services/admin/user.service.js` — `hardDeleteUser` (multi-collection wipe inside the transaction, disk-file cleanup outside via `Promise.allSettled`)
