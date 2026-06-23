@@ -7,6 +7,7 @@ import {
 	resendOtpSchema,
 	forgotPasswordSchema,
 	resetPasswordSchema,
+	changePasswordSchema,
 	googleOAuthSchema,
 	githubOAuthSchema,
 } from "../../src/validators/auth.validator.js";
@@ -238,6 +239,40 @@ describe("resetPasswordSchema", () => {
 	it("rejects a malformed otp", () => {
 		expect(
 			resetPasswordSchema.safeParse({ ...valid, otp: "12" }).success,
+		).toBe(false);
+	});
+});
+
+describe("changePasswordSchema", () => {
+	const valid = {
+		currentPassword: "CurrentPass123!",
+		newPassword: "BrandNewPass456!",
+	};
+
+	it("accepts a valid change-password payload", () => {
+		expect(changePasswordSchema.safeParse(valid).success).toBe(true);
+	});
+
+	it("trims surrounding whitespace from both passwords", () => {
+		const result = changePasswordSchema.safeParse({
+			currentPassword: "  CurrentPass123!  ",
+			newPassword: "  BrandNewPass456!  ",
+		});
+		expect(result.data.currentPassword).toBe("CurrentPass123!");
+		expect(result.data.newPassword).toBe("BrandNewPass456!");
+	});
+
+	it("rejects a missing currentPassword", () => {
+		expect(
+			changePasswordSchema.safeParse({ newPassword: "BrandNewPass456!" })
+				.success,
+		).toBe(false);
+	});
+
+	it("rejects a newPassword that fails the complexity rules", () => {
+		expect(
+			changePasswordSchema.safeParse({ ...valid, newPassword: "short" })
+				.success,
 		).toBe(false);
 	});
 });

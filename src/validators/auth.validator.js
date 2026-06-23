@@ -65,6 +65,11 @@ const resetPasswordSchema = z.object({
 	newPassword: password,
 });
 
+const changePasswordSchema = z.object({
+	currentPassword: z.string().trim().nonempty("Current password is required"),
+	newPassword: password,
+});
+
 const googleOAuthSchema = z.object({
 	idToken: z.string().trim().nonempty("ID token is required"),
 });
@@ -80,6 +85,7 @@ export {
 	resendOtpSchema,
 	forgotPasswordSchema,
 	resetPasswordSchema,
+	changePasswordSchema,
 	googleOAuthSchema,
 	githubOAuthSchema,
 };

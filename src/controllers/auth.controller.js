@@ -8,6 +8,7 @@ import {
 	resendOTP,
 	forgotPassword,
 	resetPassword,
+	changePassword,
 	loginUser,
 	loginOrCreateGoogleUser,
 	loginOrCreateGithubUser,
@@ -155,6 +156,19 @@ const getCurrentUserHandler = async (req, res) => {
 	});
 };
 
+const changePasswordHandler = async (req, res) => {
+	const { currentPassword, newPassword } = req.body;
+	const userId = req.user._id;
+	const sessionId = req.sessionId;
+
+	await changePassword(userId, currentPassword, newPassword, sessionId);
+
+	res.status(OK).json({
+		success: true,
+		message: "Password changed successfully",
+	});
+};
+
 export {
 	registerHandler,
 	verifyOTPHandler,
@@ -167,4 +181,5 @@ export {
 	googleOAuthHandler,
 	githubOAuthHandler,
 	getCurrentUserHandler,
+	changePasswordHandler,
 };

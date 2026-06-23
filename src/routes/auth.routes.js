@@ -18,6 +18,7 @@ import {
 	googleOAuthHandler,
 	githubOAuthHandler,
 	getCurrentUserHandler,
+	changePasswordHandler,
 } from "../controllers/auth.controller.js";
 
 import authenticate from "../middlewares/auth.middleware.js";
@@ -34,6 +35,7 @@ import {
 	resendOtpSchema,
 	forgotPasswordSchema,
 	resetPasswordSchema,
+	changePasswordSchema,
 	googleOAuthSchema,
 	githubOAuthSchema,
 } from "../validators/auth.validator.js";
@@ -93,6 +95,18 @@ authRouter.post(
 	authLimiter,
 	validateBody(resetPasswordSchema),
 	resetPasswordHandler,
+);
+
+/**
+ * Change the authenticated user's password
+ * @route PATCH /api/auth/change-password
+ */
+authRouter.patch(
+	"/change-password",
+	authenticate,
+	authLimiter,
+	validateBody(changePasswordSchema),
+	changePasswordHandler,
 );
 
 /**

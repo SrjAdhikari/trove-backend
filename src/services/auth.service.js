@@ -49,6 +49,7 @@ const {
 	INVALID_CREDENTIALS,
 	USER_NOT_VERIFIED,
 	PROVIDER_MISMATCH,
+	PASSWORD_REUSE,
 	GOOGLE_EMAIL_NOT_VERIFIED,
 	UNAUTHORIZED_ACCESS,
 	ACCOUNT_SUSPENDED,
@@ -282,6 +283,75 @@ const resetPassword = async (email, otp, newPassword) => {
 };
 
 /**
+ * Changes the authenticated user's password after verifying the current one,
+ * then revokes every other active session (the current device stays signed in).
+ *
+ * @param {string} userId - Authenticated user's id (req.user._id).
+ * @param {string} currentPassword - The raw current-password attempt.
+ * @param {string} newPassword - The validated new password.
+ * @param {string} currentSessionId - The current session's id (req.sessionId); preserved.
+ * @returns {Promise<void>}
+ * @throws {AppError} USER_NOT_FOUND | PROVIDER_MISMATCH | INVALID_CREDENTIALS | PASSWORD_REUSE.
+ */
+const changePassword = async (
+	userId,
+	currentPassword,
+	newPassword,
+	currentSessionId,
+) => {
+	const user = await User.findById(userId).select("+password");
+
+	if (!user) {
+		throw new AppError("User not found", NOT_FOUND, USER_NOT_FOUND);
+	}
+
+	// OAuth accounts have no password to change.
+	if (user.provider !== "email") {
+		throw new AppError(
+			`Password change is not available for accounts created with ${user.provider}`,
+			BAD_REQUEST,
+			PROVIDER_MISMATCH,
+		);
+	}
+
+	const isCurrentPasswordValid = await user.comparePassword(currentPassword);
+	if (!isCurrentPasswordValid) {
+		throw new AppError(
+			"Current password is incorrect",
+			UNAUTHORIZED,
+			INVALID_CREDENTIALS,
+		);
+	}
+
+	if (newPassword === currentPassword) {
+		throw new AppError(
+			"New password must be different from the current password",
+			BAD_REQUEST,
+			PASSWORD_REUSE,
+		);
+	}
+
+	const session = await mongoose.startSession();
+
+	// Transaction: if the other-session wipe fails, the password change rolls
+	// back so the user is never left half-updated.
+	try {
+		await session.withTransaction(async () => {
+			user.password = newPassword; // pre-save hook bcrypt-hashes it
+			await user.save({ session });
+
+			// Revoke every other session; the current device stays signed in.
+			await Session.deleteMany(
+				{ userId: user._id, _id: { $ne: currentSessionId } },
+				{ session },
+			);
+		});
+	} finally {
+		await session.endSession();
+	}
+};
+
+/**
  * Unlocks an account by verifying passwords and creating a secure session.
  * Tracks active devices to enforce concurrency limits.
  *
@@ -427,6 +497,7 @@ export {
 	resendOTP,
 	forgotPassword,
 	resetPassword,
+	changePassword,
 	loginUser,
 	loginOrCreateGoogleUser,
 	loginOrCreateGithubUser,
