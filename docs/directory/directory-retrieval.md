@@ -118,6 +118,8 @@ On read, `resolveDirectoryNames(ancestorIds, userId)` turns that list into `[{ _
 
 A root directory's `ancestorIds` is `[]`, so its breadcrumb is just the folder itself and its `path` is `"/My Files"`.
 
+The root directory is stored internally as `root-<email>`; `getDirectory` masks it to `"My Files"` in the top-level `name`, the first breadcrumb crumb, and the `path`, so responses never expose the owner's email or the internal naming convention.
+
 ## 🚀 Performance & Scalability Considerations
 
 ### 1. Memory-Safe Reads (`.lean()`)

@@ -21,6 +21,7 @@ Please navigate to the specific domain you need below:
 - [`login-and-sessions.md`](./authentication/login-and-sessions.md) - Session issuance for email/password login, Google OAuth, and GitHub OAuth sign-in, the identity-provider model, and cookie-based session strategy.
 - [`logout-flow.md`](./authentication/logout-flow.md) - Single-device and global logout, provider-agnostic session destruction.
 - [`password-reset.md`](./authentication/password-reset.md) - Forgot password and reset password flow (OTP-based, reuses User OTP fields, atomic password update + session wipe).
+- [`change-password.md`](./authentication/change-password.md) - Authenticated password change (verifies current password, atomic update + wipe of all other sessions, keeps the current one).
 
 ### 📂 [Workflow](./workflow)
 

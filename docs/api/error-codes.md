@@ -1,6 +1,6 @@
 # Error Codes
 
-> **Status:** As-of 2026-06-14. This document is a glossary that drifts as the codebase evolves — refresh it when adding or removing codes from `src/constants/appErrorCode.js`.
+> **Status:** As-of 2026-06-23. This document is a glossary that drifts as the codebase evolves — refresh it when adding or removing codes from `src/constants/appErrorCode.js`.
 
 The TroveCloud backend returns structured errors with stable, machine-readable codes. The frontend consumes these codes to drive UI behavior (which form to redirect to, which message to show, when to retry). This document is the contract: the source of truth for what each code means and where it's thrown.
 
@@ -48,8 +48,9 @@ Sourced from `src/constants/appErrorCode.js` (an `Object.freeze`-ed enum). Liste
 | `ACCOUNT_SUSPENDED`         | 403          | Authenticated user's account has `suspendedAt != null`. Returned for both fresh logins on a suspended account and any existing-session request after suspension; the auth cookie is cleared. | `authenticate` middleware; `loginUser` in `auth.service.js`                                                                       |
 | `GITHUB_EMAIL_NOT_VERIFIED` | 400          | GitHub's `/user/emails` response had no entry that was both `primary: true` and `verified: true`. | `verifyGithubCodeAndFetchProfile` in `src/lib/githubAuth.js`                                                                      |
 | `GOOGLE_EMAIL_NOT_VERIFIED` | 400          | Google's ID-token payload reported `email_verified: false`.                       | `loginOrCreateGoogleUser` in `auth.service.js`                                                                                   |
-| `INVALID_CREDENTIALS`       | 401          | Email not found, or password didn't match.                                        | `loginUser` in `auth.service.js`                                                                                                 |
-| `PROVIDER_MISMATCH`         | 400 / 409    | Sign-in or reset attempted with a method that doesn't match the account's stored provider. | `loginUser`, `forgotPassword`, `resetPassword` (400, OAuth user trying password / reset); `loginOrCreateOAuthUser` (409, OAuth attempt collides with non-matching provider) |
+| `INVALID_CREDENTIALS`       | 401          | Email not found, or password didn't match. Also the wrong current password on an authenticated change. | `loginUser`, `changePassword` in `auth.service.js`                                                                              |
+| `PASSWORD_REUSE`            | 400          | New password is identical to the current one on an authenticated change.           | `changePassword` in `auth.service.js`                                                                                            |
+| `PROVIDER_MISMATCH`         | 400 / 409    | Sign-in, reset, or password-change attempted with a method that doesn't match the account's stored provider. | `loginUser`, `forgotPassword`, `resetPassword`, `changePassword` (400, OAuth user trying password / reset / change); `loginOrCreateOAuthUser` (409, OAuth attempt collides with non-matching provider) |
 | `UNAUTHORIZED_ACCESS`       | 401          | No valid session cookie on a route that requires authentication, or the underlying user has been soft-deleted (`deletedAt != null`). The deleted case is surfaced as a generic unauthorized so account existence is not leaked. | `authenticate` middleware; `loginUser` in `auth.service.js` (soft-deleted account at credential check) |
 | `USER_NOT_VERIFIED`         | 400          | Login attempted on an account whose email-OTP was never confirmed.                | `loginUser` in `auth.service.js`                                                                                                 |
 
@@ -70,7 +71,7 @@ Returned by the admin subsystem (`/api/admin/*`). The route gate (`requireRole` 
 | --------------------- | ------------ | ------------------------------------------------------------------- | ---------------------------------------------- |
 | `ACCESS_DENIED`       | 403          | Authenticated user attempted to access a resource they don't own.   | Service layer ownership checks                 |
 | `USER_ALREADY_EXISTS` | 409          | Registration attempted with an email that's already verified.       | `createUser`, `resendOTP` in `auth.service.js` |
-| `USER_NOT_FOUND`      | 404          | Lookup for a specific user (by email, in OTP / reset flows, or by id in admin actions) failed. | `verifyOTP`, `resendOTP`, `forgotPassword`, `resetPassword` in `auth.service.js`; `getUserById` and `findUserById` (shared by every mutation handler) in `src/services/admin/user.service.js`; `updateProfile` and `uploadProfilePicture` in `src/services/user.service.js` (rare TOCTOU race — user deleted mid-request) |
+| `USER_NOT_FOUND`      | 404          | Lookup for a specific user (by email, in OTP / reset flows, or by id in admin actions) failed. | `verifyOTP`, `resendOTP`, `forgotPassword`, `resetPassword`, `changePassword` in `auth.service.js`; `getUserById` and `findUserById` (shared by every mutation handler) in `src/services/admin/user.service.js`; `updateProfile` and `uploadProfilePicture` in `src/services/user.service.js` (rare TOCTOU race — user deleted mid-request) |
 
 ### File
 
