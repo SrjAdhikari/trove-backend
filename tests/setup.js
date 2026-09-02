@@ -1,30 +1,24 @@
 import mongoose from "mongoose";
 import { beforeAll, beforeEach, inject } from "vitest";
 
-// Disable auto-index creation in tests: the TTL index on
-// `verificationExpiresAt` was a suspect for non-deterministic doc loss in
-// the in-memory replica set. Tests don't need indexes for correctness —
-// queries against an unindexed collection just collection-scan.
+// Skips building unique and TTL indexes, so neither is enforced in tests —
+// E11000 mapping is covered directly, never by a real index violation.
 mongoose.set("autoIndex", false);
 
-// `setupFiles` re-runs per test file under singleFork, so beforeAll fires once
-// per file. Guard the connect so we reuse one mongoose connection across files
-// rather than disconnect/reconnect — that dance lost writes between files in
-// early runs (only the first test of each file failed; the doc the test had
-// just created was unfindable a moment later).
+// Test files run in parallel forks, each with its own VITEST_WORKER_ID, so each
+// takes its own database on the shared replica set. The drop below is
+// database-wide and would otherwise wipe a concurrent file's data mid-test.
 beforeAll(async () => {
 	if (mongoose.connection.readyState === 0) {
 		const uri = inject("mongoUri");
-		await mongoose.connect(uri);
+		await mongoose.connect(uri, {
+			dbName: `test_w${process.env.VITEST_WORKER_ID ?? process.pid}`,
+		});
 	}
 });
 
-// Drop each collection between tests. `deleteMany({})` (sequential or
-// parallel) lost docs non-deterministically against the in-memory replica
-// set — a doc created in the next test would vanish before the count query.
-// `collection.drop()` is heavier but unambiguous: the collection is gone,
-// the next insert recreates it cleanly. `autoIndex: false` keeps mongoose
-// from rebuilding TTL/unique indexes between every test.
+// `drop()` rather than `deleteMany({})` so the collection is unambiguously gone
+// rather than emptied.
 beforeEach(async () => {
 	for (const collection of Object.values(mongoose.connection.collections)) {
 		try {
