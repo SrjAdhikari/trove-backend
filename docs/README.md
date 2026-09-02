@@ -15,6 +15,11 @@ Please navigate to the specific domain you need below:
 - [`profile-picture-upload.md`](./architecture/profile-picture-upload.md) - As-built design for profile-picture upload + public capability-URL serving (`POST` / `GET /api/users/profile-picture`).
 - [`storage-quota.md`](./architecture/storage-quota.md) - Per-user storage quota + usage breakdown endpoint (`GET /api/storage/usage`) and quota enforcement on upload.
 
+### 📂 [Architecture Decision Records](./adr)
+
+- [`0001-cloudflare-r2-for-object-storage.md`](./adr/0001-cloudflare-r2-for-object-storage.md) - Why Cloudflare R2 was chosen for user file storage, which providers were rejected, and the trade-offs accepted.
+- [`0002-browser-direct-uploads-with-quota-reservation.md`](./adr/0002-browser-direct-uploads-with-quota-reservation.md) - Why the browser uploads straight to R2, how quota survives the server not seeing the bytes, and why there is no local-disk driver.
+
 ### 📂 [Authentication](./authentication)
 
 - [`registration-flow.md`](./authentication/registration-flow.md) - User registration via email + OTP, plus Google and GitHub OAuth alternative paths.
