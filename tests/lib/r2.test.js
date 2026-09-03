@@ -1,0 +1,308 @@
+import { afterAll, describe, it, expect } from "vitest";
+import { Readable } from "node:stream";
+import { randomUUID } from "node:crypto";
+
+import envConfig from "../../src/constants/env.js";
+import {
+	buildFileKey,
+	buildProfilePictureKey,
+	presignPut,
+	presignGet,
+	headObject,
+	readRange,
+	putObject,
+	deleteObject,
+	listObjects,
+} from "../../src/lib/r2.js";
+
+const ID = "507f1f77bcf86cd799439011";
+const NONCE = "a".repeat(32);
+
+// Unique per run: two developers sharing the dev bucket must not delete each
+// other's fixtures in afterAll.
+const RUN = randomUUID().replace(/-/g, "");
+const keyFor = (suffix) => `files/${ID}-${RUN}${suffix}`;
+const created = new Set();
+
+const put = async (suffix, body, options) => {
+	const key = keyFor(suffix);
+	created.add(key);
+	await putObject(key, Readable.from([body]), options);
+	return key;
+};
+
+afterAll(async () => {
+	await Promise.allSettled(
+		[...created].map(async (key) => {
+			try { await deleteObject(key); } catch {}
+		}),
+	);
+});
+
+describe("r2 key builders", () => {
+	it("builds a file key from id, nonce, and lowercase extension", () => {
+		expect(buildFileKey(ID, NONCE, ".pdf")).toBe(`files/${ID}-${NONCE}.pdf`);
+		expect(buildFileKey(ID, NONCE, "")).toBe(`files/${ID}-${NONCE}`);
+		expect(buildFileKey(ID, NONCE)).toBe(`files/${ID}-${NONCE}`);
+	});
+
+	it("rejects an uppercase extension outright", () => {
+		// `File.extension` is stored with `lowercase: true`; an uppercase key
+		// written at mint could never be matched again.
+		expect(() => buildFileKey(ID, NONCE, ".PDF")).toThrow();
+	});
+
+	it("rejects malformed ids, nonces, and extensions", () => {
+		expect(() => buildFileKey("../../etc/passwd", NONCE, ".pdf")).toThrow();
+		expect(() => buildFileKey("", NONCE)).toThrow();
+		expect(() => buildFileKey(ID, "short")).toThrow();
+		expect(() => buildFileKey(ID, NONCE, "/../evil")).toThrow();
+		expect(() => buildFileKey(ID, NONCE, ".tar.gz")).toThrow();
+		expect(() => buildFileKey(ID, NONCE, ".c++")).toThrow();
+	});
+
+	it("scopes profile picture keys to their owner", () => {
+		const token = "b".repeat(32);
+		expect(buildProfilePictureKey(ID, token)).toBe(`profile-pictures/${ID}/${token}`);
+	});
+
+	it("rejects a malformed owner id or token", () => {
+		expect(() => buildProfilePictureKey(ID, "../../etc/passwd")).toThrow();
+		expect(() => buildProfilePictureKey(ID, "zz")).toThrow();
+		expect(() => buildProfilePictureKey(ID, "A".repeat(32))).toThrow();
+		expect(() => buildProfilePictureKey("nope", "b".repeat(32))).toThrow();
+	});
+});
+
+describe("r2 key validation", () => {
+	it("refuses a key that is not one of the two known shapes", async () => {
+		// `assertKey` throws synchronously, but these wrappers are async, so the
+		// throw surfaces as a rejection rather than a sync throw.
+		await expect(headObject("../../etc/passwd")).rejects.toMatchObject({ statusCode: 400 });
+		await expect(deleteObject("secrets/key.pem")).rejects.toMatchObject({ statusCode: 400 });
+		await expect(presignGet("files/not-a-valid-shape.txt")).rejects.toMatchObject({
+			statusCode: 400,
+		});
+		await expect(
+			presignPut("profile-pictures/tooshort/abc", { contentType: "text/plain", contentLength: 1 }),
+		).rejects.toMatchObject({ statusCode: 400 });
+	});
+});
+
+describe("r2 object operations", () => {
+	it("puts an object and reads it back through a presigned GET", async () => {
+		const key = await put(".txt", "hello r2", { contentType: "text/plain" });
+
+		const url = await presignGet(key, { contentType: "text/plain" });
+		const response = await fetch(url);
+
+		expect(response.status).toBe(200);
+		expect(await response.text()).toBe("hello r2");
+		expect(response.headers.get("content-type")).toBe("text/plain");
+	});
+
+	it("headObject returns size and content type, or null when absent", async () => {
+		const key = await put(".head", "12345", { contentType: "text/plain" });
+
+		expect(await headObject(key)).toEqual({ size: 5, contentType: "text/plain" });
+		expect(await headObject(keyFor(".absent"))).toBeNull();
+	});
+
+	it("readRange returns only the requested leading bytes", async () => {
+		const key = await put(".range", "ABCDEFGHIJ");
+		expect((await readRange(key, 0, 3)).toString()).toBe("ABCD");
+	});
+
+	it("presignGet sets an attachment disposition when inline is false", async () => {
+		const key = await put(".attach", "bytes");
+
+		const url = await presignGet(key, { fileName: "renamed report.txt", inline: false });
+		const disposition = (await fetch(url)).headers.get("content-disposition");
+
+		expect(disposition).toContain("attachment");
+		expect(disposition).toContain("renamed report.txt");
+	});
+
+	it("presignPut signs both content-length and content-type", async () => {
+		const url = await presignPut(keyFor(".signed"), {
+			contentType: "text/plain",
+			contentLength: 3,
+		});
+
+		const signed = decodeURIComponent(
+			new URL(url).searchParams.get("X-Amz-SignedHeaders"),
+		);
+		expect(signed).toContain("content-length");
+		expect(signed).toContain("content-type");
+	});
+
+	it("presignPut accepts a body matching the signature", async () => {
+		const key = keyFor(".exact");
+		created.add(key);
+		const body = "exactly-24-bytes-long!!!";
+
+		const url = await presignPut(key, { contentType: "text/plain", contentLength: body.length });
+		const response = await fetch(url, {
+			method: "PUT",
+			headers: { "Content-Type": "text/plain", "Content-Length": String(body.length) },
+			body,
+		});
+
+		expect(response.status).toBe(200);
+	});
+
+	it("presignPut rejects a body of a different length or type", async () => {
+		const key = keyFor(".mismatch");
+		created.add(key);
+		const body = "abc";
+
+		const url = await presignPut(key, { contentType: "text/plain", contentLength: body.length });
+
+		const wrongLength = await fetch(url, {
+			method: "PUT",
+			headers: { "Content-Type": "text/plain" },
+			body: "this body is very much longer than three bytes",
+		});
+		expect(wrongLength.ok).toBe(false);
+
+		const wrongType = await fetch(url, {
+			method: "PUT",
+			headers: { "Content-Type": "application/json", "Content-Length": String(body.length) },
+			body,
+		});
+		expect(wrongType.ok).toBe(false);
+
+		// A rejection that still wrote the object is the failure the quota
+		// model cannot survive, so assert the absence rather than the status.
+		expect(await headObject(key)).toBeNull();
+	});
+
+	it("refuses to mint an upload URL without a signed length or type", async () => {
+		// Omitting contentLength does not fail — it drops content-length out of
+		// the signature and mints an unbounded upload URL. Omitting contentType
+		// fails closed. The asymmetry is why both are checked here.
+		await expect(
+			presignPut(keyFor(".nolength"), { contentType: "text/plain" }),
+		).rejects.toMatchObject({ statusCode: 400 });
+
+		await expect(
+			presignPut(keyFor(".notype"), { contentLength: 5 }),
+		).rejects.toMatchObject({ statusCode: 400 });
+
+		await expect(
+			presignPut(keyFor(".badlength"), { contentType: "text/plain", contentLength: -1 }),
+		).rejects.toMatchObject({ statusCode: 400 });
+
+		await expect(
+			presignPut(keyFor(".fractional"), { contentType: "text/plain", contentLength: 1.5 }),
+		).rejects.toMatchObject({ statusCode: 400 });
+	});
+
+	it("presignGet defaults to attachment disposition", async () => {
+		// Callers must opt in to inline after checking isInlineSafe(); user
+		// bytes rendered from the R2 origin are the thing being avoided.
+		const key = await put(".default", "bytes");
+
+		const disposition = (await fetch(await presignGet(key))).headers.get(
+			"content-disposition",
+		);
+		expect(disposition).toContain("attachment");
+	});
+
+	it("deleteObject removes an object and is idempotent", async () => {
+		const key = await put(".delete", "bye");
+
+		await deleteObject(key);
+		expect(await headObject(key)).toBeNull();
+		await expect(deleteObject(key)).resolves.toBeUndefined();
+	});
+
+	it("listObjects pages through a prefix", async () => {
+		await put(".lista", "a");
+		await put(".listb", "b");
+
+		const page = await listObjects(`files/${ID}-${RUN}.list`);
+		expect(page.keys).toHaveLength(2);
+		expect(page.nextToken).toBeUndefined();
+		expect(page.keys[0]).toHaveProperty("lastModified");
+	});
+});
+
+// BLOCKING GATE — the quota model assumes the signed Content-Length bounds the
+// stored object size. If either test fails, stop before writing Phase 2.
+describe("r2 signed-length is a real bound", () => {
+	it("does not permit a chunked upload larger than the signed content length", async () => {
+		const key = keyFor(".chunked");
+		created.add(key);
+
+		const payload = Buffer.alloc(1_000_000, 0x41);
+		// aws-chunked framing: <hex-size>\r\n<data>\r\n0\r\n\r\n
+		const framed = Buffer.concat([
+			Buffer.from(`${payload.length.toString(16)}\r\n`),
+			payload,
+			Buffer.from("\r\n0\r\n\r\n"),
+		]);
+
+		const url = await presignPut(key, {
+			contentType: "application/octet-stream",
+			contentLength: framed.length,
+		});
+
+		const response = await fetch(url, {
+			method: "PUT",
+			headers: {
+				"Content-Type": "application/octet-stream",
+				"Content-Length": String(framed.length),
+				"Content-Encoding": "aws-chunked",
+				"x-amz-decoded-content-length": String(payload.length),
+				"x-amz-content-sha256": "STREAMING-UNSIGNED-PAYLOAD-TRAILER",
+			},
+			body: framed,
+		});
+
+		// Assert on both branches: an `if (response.ok)` alone passes with zero
+		// assertions when R2 rejects for an unrelated reason, which is exactly
+		// the case this gate must not silently accept.
+		const stored = await headObject(key);
+
+		if (response.ok) {
+			// Never the decoded 1 MB against a signature for the framed length.
+			expect(stored.size).toBe(framed.length);
+		} else {
+			expect(response.status).toBe(403);
+			expect(stored).toBeNull();
+		}
+	});
+
+	it("ignores unsigned x-amz headers that would change PUT semantics", async () => {
+		const source = await put(".copysource", "secret bytes");
+		const key = keyFor(".copytarget");
+		created.add(key);
+
+		const url = await presignPut(key, {
+			contentType: "text/plain",
+			contentLength: 12,
+		});
+
+		const response = await fetch(url, {
+			method: "PUT",
+			headers: {
+				"Content-Type": "text/plain",
+				"Content-Length": "12",
+				"x-amz-copy-source": `/${envConfig.R2_BUCKET}/${source}`,
+				"x-amz-storage-class": "STANDARD_IA",
+				"x-amz-tagging": "abuse=true",
+			},
+			body: "aaaaaaaaaaaa",
+		});
+
+		if (response.ok) {
+			// Our body must win — not the copy source.
+			const check = await fetch(await presignGet(key));
+			expect(await check.text()).toBe("aaaaaaaaaaaa");
+		} else {
+			expect(response.status).toBe(403);
+			expect(await headObject(key)).toBeNull();
+		}
+	});
+});

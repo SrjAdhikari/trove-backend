@@ -7,6 +7,8 @@ export const ONE_HOUR_MS = 60 * 60 * 1000;
 export const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 export const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 export const ONE_YEAR_SECONDS = 365 * 24 * 60 * 60;
+export const FIVE_MINUTES_SECONDS = 5 * 60;
+export const ONE_HOUR_SECONDS = 60 * 60;
 
 const tenMinutesFromNow = () => new Date(Date.now() + TEN_MINUTES_MS);
 const oneHourFromNow = () => new Date(Date.now() + ONE_HOUR_MS);
