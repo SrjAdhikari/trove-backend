@@ -88,4 +88,80 @@ const createImageTypeValidator = () => {
 	return { stream, state };
 };
 
-export { MIN_HEADER_BYTES, detectImageType, createImageTypeValidator };
+const DEFAULT_MIME = "application/octet-stream";
+
+// Null-prototype so `.constructor` cannot resolve to the Object function.
+// No markup types: objects are served from an R2 origin, `.xml` included.
+const EXTENSION_MIME_MAP = Object.freeze(
+	Object.assign(Object.create(null), {
+		pdf: "application/pdf",
+		txt: "text/plain; charset=utf-8",
+		md: "text/plain; charset=utf-8",
+		csv: "text/csv; charset=utf-8",
+		json: "application/json",
+		zip: "application/zip",
+		doc: "application/msword",
+		docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+		xls: "application/vnd.ms-excel",
+		xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+		ppt: "application/vnd.ms-powerpoint",
+		pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+		png: "image/png",
+		jpg: "image/jpeg",
+		jpeg: "image/jpeg",
+		gif: "image/gif",
+		webp: "image/webp",
+		avif: "image/avif",
+		mp4: "video/mp4",
+		webm: "video/webm",
+		mov: "video/quicktime",
+		mp3: "audio/mpeg",
+		wav: "audio/wav",
+		ogg: "audio/ogg",
+	}),
+);
+
+// Allowlist, not blocklist — a presigned GET cannot set `nosniff`.
+const INLINE_SAFE_TYPES = Object.freeze(
+	new Set([
+		"application/pdf",
+		"text/plain; charset=utf-8",
+		"text/csv; charset=utf-8",
+		"image/png",
+		"image/jpeg",
+		"image/gif",
+		"image/webp",
+		"image/avif",
+		"video/mp4",
+		"video/webm",
+		"video/quicktime",
+		"audio/mpeg",
+		"audio/wav",
+		"audio/ogg",
+	]),
+);
+
+/**
+ * Resolves a stored Content-Type from a file extension.
+ *
+ * @param {string} [extension] - Extension with or without the leading dot.
+ * @returns {string} The mapped type, or `application/octet-stream`.
+ */
+const mimeFromExtension = (extension) => {
+	if (typeof extension !== "string") return DEFAULT_MIME;
+	const mime = EXTENSION_MIME_MAP[extension.replace(/^\./, "").toLowerCase()];
+
+	return typeof mime === "string" ? mime : DEFAULT_MIME;
+};
+
+/** Whether this type may be served with `inline` disposition. */
+const isInlineSafe = (contentType) => INLINE_SAFE_TYPES.has(contentType);
+
+export {
+	MIN_HEADER_BYTES,
+	DEFAULT_MIME,
+	detectImageType,
+	createImageTypeValidator,
+	mimeFromExtension,
+	isInlineSafe,
+};
