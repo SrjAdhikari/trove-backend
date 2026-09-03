@@ -1,25 +1,20 @@
 import { defineConfig } from "vitest/config";
 
-// Single-fork mode lets every test file share one in-memory replica set
-// (booted in globalSetup) and one mongoose connection — without it, each
-// worker would spin up its own DB and the suite would balloon in time + RAM.
+// Test files run in parallel forks against the one in-memory replica set booted
+// in globalSetup, but each takes its own database (see tests/setup.js) — the
+// per-test collection drop is database-wide and would otherwise wipe a
+// concurrent file's fixtures.
 export default defineConfig({
 	test: {
 		environment: "node",
 		pool: "forks",
-		forks: { singleFork: true },
 		globalSetup: ["./tests/globalSetup.js"],
 		setupFiles: ["./tests/setup.js"],
 		testTimeout: 30_000,
 		hookTimeout: 120_000,
-		// Residual ~1-in-5 flake against the in-memory replica set. The earlier
-		// `Promise.all`-with-shared-session bug in `hardDeleteUser` was fixed
-		// (which improved stability ~2/5 → 1/5), but a non-determinism still
-		// surfaces — appears to be a `mongodb-memory-server` quirk where a doc
-		// created in one test occasionally isn't visible to a query a few ms
-		// later in the same test. A single retry masks it; a real bug would
-		// fail on the retry too.
-		retry: 2,
+		// Pinned: a retry re-runs a failing test into the same conditions, so it
+		// hides real failures rather than smoothing over genuine flake.
+		retry: 0,
 		include: ["tests/**/*.test.js"],
 	},
 });
