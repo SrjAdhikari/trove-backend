@@ -2,18 +2,15 @@
 
 import {
 	getFile,
-	uploadFile,
+	initiateUpload,
+	confirmUpload,
 	updateFile,
 	deleteFile,
 } from "../services/file.service.js";
-import { sanitizeFileName } from "../validators/file.validator.js";
 
 import httpStatus from "../constants/httpStatus.js";
-import appErrorCode from "../constants/appErrorCode.js";
-import AppError from "../errors/AppError.js";
 
-const { OK, CREATED, BAD_REQUEST } = httpStatus;
-const { INVALID_INPUT } = appErrorCode;
+const { OK, CREATED } = httpStatus;
 
 const getFileHandler = async (req, res) => {
 	const user = req.user;
@@ -28,34 +25,37 @@ const getFileHandler = async (req, res) => {
 	return res.sendFile(filePath);
 };
 
-const uploadFileHandler = async (req, res) => {
+const initiateUploadHandler = async (req, res) => {
 	const user = req.user;
+
+	// Body validated and name sanitized by initiateUploadSchema (validateBody).
+	const { name, size } = req.body ?? {};
 
 	// If no ID is explicitly requested, default to the user's permanent Root Directory
 	const parentDirId = req.params.parentDirId || user.rootDirId.toString();
 
-	let fileName = "untitled";
-	try {
-		if (req.headers.filename) {
-			fileName = decodeURIComponent(req.headers.filename);
-		}
-	} catch (error) {
-		throw new AppError("Invalid filename encoding", BAD_REQUEST, INVALID_INPUT);
-	}
-
-	// Filename header bypasses validateBody, so sanitize the input
-	// here to prevent header injection or directory traversal
-	fileName = sanitizeFileName(fileName) || "untitled";
-
-	const file = await uploadFile(
+	const result = await initiateUpload(
 		parentDirId,
 		user._id,
-		fileName,
-		req,
+		name,
+		size,
 		user.storageLimit,
 	);
 
 	return res.status(CREATED).json({
+		success: true,
+		message: "Upload initiated successfully",
+		data: result,
+	});
+};
+
+const confirmUploadHandler = async (req, res) => {
+	const user = req.user;
+	const fileId = req.params.id;
+
+	const file = await confirmUpload(fileId, user._id);
+
+	return res.status(OK).json({
 		success: true,
 		message: "File uploaded successfully",
 		data: file,
@@ -68,7 +68,6 @@ const updateFileHandler = async (req, res) => {
 
 	// Name is sanitized and validated by renameFileSchema (validateBody).
 	const newFileName = req.body.newFileName;
-
 	const updatedFile = await updateFile(fileId, newFileName, user._id);
 
 	return res.status(OK).json({
@@ -93,7 +92,8 @@ const deleteFileHandler = async (req, res) => {
 
 export {
 	getFileHandler,
-	uploadFileHandler,
+	initiateUploadHandler,
+	confirmUploadHandler,
 	updateFileHandler,
 	deleteFileHandler,
 };
