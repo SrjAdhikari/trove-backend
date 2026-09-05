@@ -1,5 +1,7 @@
 import mongoose from "mongoose";
-import { beforeAll, beforeEach, inject } from "vitest";
+import { afterEach, beforeAll, beforeEach, inject } from "vitest";
+
+import { cleanupTestObjects } from "./helpers/r2.js";
 
 // Skips building unique and TTL indexes, so neither is enforced in tests —
 // E11000 mapping is covered directly, never by a real index violation.
@@ -28,6 +30,13 @@ beforeEach(async () => {
 			if (err.code !== 26) throw err;
 		}
 	}
+});
+
+// Tests really write to the dev bucket, so every object one leaves behind has
+// to go. `afterEach`, not `beforeEach`: the documents naming those keys are
+// still there, and the last test of a file has no `beforeEach` after it.
+afterEach(async () => {
+	if (mongoose.connection.readyState === 1) await cleanupTestObjects();
 });
 
 // No afterAll disconnect — globalSetup teardown stops the in-memory replica set
