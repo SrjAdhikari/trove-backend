@@ -22,6 +22,7 @@ import {
 	parseProfilePictureToken,
 } from "../utils/storagePath.js";
 
+import envConfig from "../constants/env.js";
 import httpStatus from "../constants/httpStatus.js";
 import appErrorCode from "../constants/appErrorCode.js";
 
@@ -34,7 +35,7 @@ const {
 	PROFILE_PICTURE_NOT_FOUND,
 } = appErrorCode;
 
-const MAX_PROFILE_PICTURE_BYTES = 2 * 1000 * 1000;
+const { MAX_PROFILE_PICTURE_SIZE } = envConfig;
 
 /**
  * Updates the authenticated user's display name and returns the user in the
@@ -83,7 +84,7 @@ const uploadProfilePicture = async (userId, fileStream) => {
 	const filePath = buildProfilePicturePath(token);
 
 	const typeValidator = createImageTypeValidator();
-	const counter = createByteCounter(MAX_PROFILE_PICTURE_BYTES);
+	const counter = createByteCounter(MAX_PROFILE_PICTURE_SIZE);
 
 	await mkdir(PROFILE_PICTURES_ROOT, { recursive: true });
 
