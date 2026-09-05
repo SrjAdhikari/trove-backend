@@ -8,7 +8,7 @@ import {
 	buildProfilePictureKey,
 	presignPut,
 	presignGet,
-	headObject,
+	getObjectMetadata,
 	readRange,
 	putObject,
 	deleteObject,
@@ -78,7 +78,7 @@ describe("r2 key validation", () => {
 	it("refuses a key that is not one of the two known shapes", async () => {
 		// `assertKey` throws synchronously, but these wrappers are async, so the
 		// throw surfaces as a rejection rather than a sync throw.
-		await expect(headObject("../../etc/passwd")).rejects.toMatchObject({ statusCode: 400 });
+		await expect(getObjectMetadata("../../etc/passwd")).rejects.toMatchObject({ statusCode: 400 });
 		await expect(deleteObject("secrets/key.pem")).rejects.toMatchObject({ statusCode: 400 });
 		await expect(presignGet("files/not-a-valid-shape.txt")).rejects.toMatchObject({
 			statusCode: 400,
@@ -101,11 +101,11 @@ describe("r2 object operations", () => {
 		expect(response.headers.get("content-type")).toBe("text/plain");
 	});
 
-	it("headObject returns size and content type, or null when absent", async () => {
+	it("getObjectMetadata returns size and content type, or null when absent", async () => {
 		const key = await put(".head", "12345", { contentType: "text/plain" });
 
-		expect(await headObject(key)).toEqual({ size: 5, contentType: "text/plain" });
-		expect(await headObject(keyFor(".absent"))).toBeNull();
+		expect(await getObjectMetadata(key)).toEqual({ size: 5, contentType: "text/plain" });
+		expect(await getObjectMetadata(keyFor(".absent"))).toBeNull();
 	});
 
 	it("readRange returns only the requested leading bytes", async () => {
@@ -174,7 +174,7 @@ describe("r2 object operations", () => {
 
 		// A rejection that still wrote the object is the failure the quota
 		// model cannot survive, so assert the absence rather than the status.
-		expect(await headObject(key)).toBeNull();
+		expect(await getObjectMetadata(key)).toBeNull();
 	});
 
 	it("refuses to mint an upload URL without a signed length or type", async () => {
@@ -213,7 +213,7 @@ describe("r2 object operations", () => {
 		const key = await put(".delete", "bye");
 
 		await deleteObject(key);
-		expect(await headObject(key)).toBeNull();
+		expect(await getObjectMetadata(key)).toBeNull();
 		await expect(deleteObject(key)).resolves.toBeUndefined();
 	});
 
@@ -263,7 +263,7 @@ describe("r2 signed-length is a real bound", () => {
 		// Assert on both branches: an `if (response.ok)` alone passes with zero
 		// assertions when R2 rejects for an unrelated reason, which is exactly
 		// the case this gate must not silently accept.
-		const stored = await headObject(key);
+		const stored = await getObjectMetadata(key);
 
 		if (response.ok) {
 			// Never the decoded 1 MB against a signature for the framed length.
@@ -302,7 +302,7 @@ describe("r2 signed-length is a real bound", () => {
 			expect(await check.text()).toBe("aaaaaaaaaaaa");
 		} else {
 			expect(response.status).toBe(403);
-			expect(await headObject(key)).toBeNull();
+			expect(await getObjectMetadata(key)).toBeNull();
 		}
 	});
 });
