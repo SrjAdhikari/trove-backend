@@ -25,7 +25,9 @@ const getStorageUsage = async (userId, totalStorageLimit) => {
 		.lean();
 
 	const usedBytes = rootDir?.size ?? 0;
-	const files = await File.find({ userId }).select("extension size").lean();
+	const files = await File.find({ userId, status: "ready" })
+		.select("extension size")
+		.lean();
 
 	// Aggregate total size by category using the extension categorization utility
 	const sizeByCategory = files.reduce((acc, file) => {

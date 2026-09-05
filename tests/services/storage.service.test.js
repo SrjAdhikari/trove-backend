@@ -43,6 +43,33 @@ describe("getStorageUsage", () => {
 		]);
 	});
 
+	it("leaves pending uploads out of the breakdown", async () => {
+		const user = await createTestUser();
+		const root = await createTestDirectory(user._id, {
+			size: 1500,
+			fileCount: 2,
+		});
+		await createTestFile(user._id, root._id, {
+			extension: ".pdf",
+			size: 1000,
+		});
+
+		// Its bytes are already inside root.size because the quota is reserved up
+		// front, but it is not a file the user has, so it must not appear as one.
+		await createTestFile(user._id, root._id, {
+			extension: ".jpg",
+			size: 500,
+			status: "pending",
+		});
+
+		const usage = await getStorageUsage(user._id, user.storageLimit);
+
+		expect(usage.used).toBe(1500);
+		expect(usage.breakdown).toEqual([
+			{ category: "Documents", size: 1000, icon: "file-text" },
+		]);
+	});
+
 	it("counts only the requesting user's files and root (cross-user isolation)", async () => {
 		const me = await createTestUser();
 		const other = await createTestUser();
