@@ -166,6 +166,9 @@ const streamFileIntoTrove = async (
 		ctx.totalBytes += counter.state.bytes;
 		return uploaded;
 	} catch (error) {
+		// The upload can reject before reading a byte, leaving the Drive socket open.
+		counted.destroy();
+
 		if (counter.state.tripped) {
 			throw new AppError(
 				"File exceeds size cap",
