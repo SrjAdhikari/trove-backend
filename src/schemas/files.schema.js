@@ -5,7 +5,6 @@ const fileSchema = {
 		bsonType: "object",
 		required: [
 			"_id",
-			"contentType",
 			"extension",
 			"name",
 			"parentDirId",
