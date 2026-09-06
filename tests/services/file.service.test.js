@@ -3,6 +3,7 @@ import { Readable } from "node:stream";
 import mongoose from "mongoose";
 
 import {
+	MIN_UPLOAD_BYTES_PER_SECOND,
 	getFile,
 	deleteFile,
 	uploadFileFromServer,
@@ -679,11 +680,15 @@ describe("initiateUpload", () => {
 		const user = await createTestUser();
 		const dir = await createTestDirectory(user._id);
 
+		// The size whose transfer estimate lands exactly on the 1-hour clamp, so
+		// anything above it is clamped rather than sized by the transfer.
+		const ceilingSize = (ONE_HOUR_MS / 1000) * MIN_UPLOAD_BYTES_PER_SECOND;
+
 		const before = Date.now();
 		const small = await initiateUpload(dir._id, user._id, "small.txt", 100, 10 ** 9);
-		// 16 kB/s × 1800s: between the 15-minute floor and the 1-hour ceiling.
-		const mid = await initiateUpload(dir._id, user._id, "mid.bin", 16 * 1000 * 1800, 10 ** 9);
-		const large = await initiateUpload(dir._id, user._id, "large.bin", 100 * 1000 * 1000, 10 ** 9);
+		// Half the ceiling: between the 15-minute floor and the 1-hour ceiling.
+		const mid = await initiateUpload(dir._id, user._id, "mid.bin", ceilingSize / 2, 10 ** 9);
+		const large = await initiateUpload(dir._id, user._id, "large.bin", ceilingSize * 1.5, 10 ** 9);
 
 		const windowOf = async (mint) =>
 			(await File.findById(mint.fileId).select("+objectKey").lean()).uploadExpiresAt.getTime() - before;
@@ -703,8 +708,8 @@ describe("initiateUpload", () => {
 		expect(midWindow).toBeGreaterThan(ttlMs + FIFTEEN_MINUTES_MS);
 		expect(midWindow).toBeLessThan(ttlMs + ONE_HOUR_MS);
 
-		// At a 16 kB/s floor, 100 MB needs ~1h45m of transfer — so the ceiling is
-		// reachable and really does bound the window rather than being dead code.
+		// The ceiling is reachable and really does bound the window, rather than
+		// being dead code no declared size ever reaches.
 		expect(largeWindow).toBeGreaterThanOrEqual(ttlMs + ONE_HOUR_MS);
 		expect(largeWindow).toBeLessThan(ttlMs + ONE_HOUR_MS + 10_000);
 	});

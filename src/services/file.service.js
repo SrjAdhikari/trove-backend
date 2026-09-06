@@ -519,6 +519,7 @@ const confirmUpload = async (fileId, userId) => {
 };
 
 export {
+	MIN_UPLOAD_BYTES_PER_SECOND,
 	getFile,
 	uploadFileFromServer,
 	updateFile,
