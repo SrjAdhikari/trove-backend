@@ -107,7 +107,7 @@ const uploadProfilePicture = async (userId, fileStream) => {
 		}
 		if (counter.state.tripped) {
 			throw new AppError(
-				"Profile picture exceeds the 2 MB size limit",
+				"Profile picture exceeds the size limit",
 				BAD_REQUEST,
 				IMAGE_TOO_LARGE,
 			);
