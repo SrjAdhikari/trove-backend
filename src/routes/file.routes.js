@@ -8,6 +8,7 @@
 import { Router } from "express";
 import {
 	getFileHandler,
+	createDownloadUrlHandler,
 	initiateUploadHandler,
 	confirmUploadHandler,
 	updateFileHandler,
@@ -56,6 +57,12 @@ fileRouter.post(
  * @route POST /api/files/{:id}/confirm
  */
 fileRouter.post("/:id/confirm", mutationLimiter, confirmUploadHandler);
+
+/**
+ * Mint a signed download URL for a file
+ * @route GET /api/files/{:id}/download-url
+ */
+fileRouter.get("/:id/download-url", readLimiter, createDownloadUrlHandler);
 
 /**
  * Get a file by id

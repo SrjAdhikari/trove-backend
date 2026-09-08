@@ -2,6 +2,7 @@
 
 import {
 	getFile,
+	createDownloadUrl,
 	initiateUpload,
 	confirmUpload,
 	updateFile,
@@ -16,13 +17,28 @@ const getFileHandler = async (req, res) => {
 	const user = req.user;
 	const fileId = req.params.id;
 
-	const { file, filePath } = await getFile(fileId, user._id);
+	const file = await getFile(fileId, user._id);
 
-	if (req.query.action === "download") {
-		return res.download(filePath, file.name);
-	}
+	return res.status(OK).json({
+		success: true,
+		message: "File retrieved successfully",
+		data: file,
+	});
+};
 
-	return res.sendFile(filePath);
+const createDownloadUrlHandler = async (req, res) => {
+	const user = req.user;
+	const fileId = req.params.id;
+
+	const result = await createDownloadUrl(fileId, user._id, {
+		download: req.query.action === "download",
+	});
+
+	return res.status(OK).json({
+		success: true,
+		message: "Download URL created successfully",
+		data: result,
+	});
 };
 
 const initiateUploadHandler = async (req, res) => {
@@ -92,6 +108,7 @@ const deleteFileHandler = async (req, res) => {
 
 export {
 	getFileHandler,
+	createDownloadUrlHandler,
 	initiateUploadHandler,
 	confirmUploadHandler,
 	updateFileHandler,

@@ -5,6 +5,7 @@ import mongoose from "mongoose";
 import {
 	MIN_UPLOAD_BYTES_PER_SECOND,
 	getFile,
+	createDownloadUrl,
 	deleteFile,
 	uploadFileFromServer,
 	updateFile,
@@ -19,6 +20,7 @@ import {
 	putObject,
 	deleteObject,
 	UPLOAD_URL_TTL_SECONDS,
+	DOWNLOAD_URL_TTL_SECONDS,
 } from "../../src/lib/r2.js";
 import File from "../../src/models/file.model.js";
 import Directory from "../../src/models/directory.model.js";
@@ -1326,5 +1328,126 @@ describe("quota enforcement fails closed on an unusable limit", () => {
 
 		expect(file.status).toBe("ready");
 		expect(await dirStats(dir._id)).toEqual({ size: 5, fileCount: 1 });
+	});
+});
+
+describe("getFile and createDownloadUrl", () => {
+	const readyFile = (user, dir, name = "report.pdf", body = "%PDF-1.4") =>
+		upload(dir._id, user._id, name, body);
+
+	it("getFile returns the ready document without the object key", async () => {
+		const user = await createTestUser();
+		const dir = await createTestDirectory(user._id);
+		const created = await readyFile(user, dir);
+
+		const file = await getFile(created._id, user._id);
+
+		expect(file.name).toBe("report.pdf");
+		expect(file.status).toBe("ready");
+		expect(file.contentType).toBe("application/pdf");
+		// The nonce in the key is the only thing making another user's key
+		// unguessable, and this response now goes to the client.
+		expect(file).not.toHaveProperty("objectKey");
+		// The disk path is gone; the read path is R2 only.
+		expect(file).not.toHaveProperty("filePath");
+	});
+
+	it("getFile hides a pending upload", async () => {
+		const user = await createTestUser();
+		const dir = await createTestDirectory(user._id);
+		const mint = await initiateUpload(dir._id, user._id, "notes.txt", 10, 1_000_000);
+
+		await expect(getFile(mint.fileId, user._id)).rejects.toMatchObject({
+			code: "FILE_NOT_FOUND",
+			statusCode: 404,
+		});
+	});
+
+	it("createDownloadUrl returns a fetchable inline URL for an allowlisted type", async () => {
+		const user = await createTestUser();
+		const dir = await createTestDirectory(user._id);
+		const created = await readyFile(user, dir);
+
+		const { url, expiresAt } = await createDownloadUrl(created._id, user._id);
+
+		// Invariant 2: the stored key, never one rebuilt from the id.
+		expect(decodeURIComponent(url)).toContain(created.objectKey);
+		expect(expiresAt).toBeInstanceOf(Date);
+		expect(expiresAt.getTime()).toBeGreaterThan(Date.now());
+		expect(expiresAt.getTime() - Date.now()).toBeLessThanOrEqual(
+			DOWNLOAD_URL_TTL_SECONDS * 1000,
+		);
+
+		const response = await fetch(url);
+		expect(response.status).toBe(200);
+		expect(response.headers.get("content-type")).toBe("application/pdf");
+		expect(response.headers.get("content-disposition")).toContain("inline");
+	});
+
+	it("forces attachment for a type that is not inline-safe", async () => {
+		const user = await createTestUser();
+		const dir = await createTestDirectory(user._id);
+		// .bin is absent from the MIME map, so it resolves to
+		// application/octet-stream, which is not on the inline allowlist.
+		const created = await readyFile(user, dir, "blob.bin", "not markup");
+
+		const { url } = await createDownloadUrl(created._id, user._id);
+		const response = await fetch(url);
+
+		expect(response.headers.get("content-disposition")).toContain("attachment");
+		expect(response.headers.get("content-disposition")).not.toContain("inline");
+	});
+
+	it("honours an explicit download request and keeps the file name", async () => {
+		const user = await createTestUser();
+		const dir = await createTestDirectory(user._id);
+		const created = await readyFile(user, dir, "quarterly report.pdf");
+
+		const { url } = await createDownloadUrl(created._id, user._id, {
+			download: true,
+		});
+		const disposition = (await fetch(url)).headers.get("content-disposition");
+
+		expect(disposition).toContain("attachment");
+		expect(disposition).toContain("quarterly report.pdf");
+	});
+
+	it("serves the stored extension after a rename to another one", async () => {
+		const user = await createTestUser();
+		const dir = await createTestDirectory(user._id);
+		const created = await readyFile(user, dir, "payload.txt", "plain text");
+
+		await updateFile(created._id, "payload.html", user._id);
+
+		const { url } = await createDownloadUrl(created._id, user._id, {
+			download: true,
+		});
+		const response = await fetch(url);
+		const disposition = response.headers.get("content-disposition");
+
+		// The extension the browser sees must match the bytes we stored, and the
+		// type must stay the one the object was written with.
+		expect(disposition).toContain("payload.txt");
+		expect(disposition).not.toContain("payload.html");
+		expect(response.headers.get("content-type")).toBe("text/plain; charset=utf-8");
+	});
+
+	it("refuses a pending upload, a non-owner, and an unknown id", async () => {
+		const owner = await createTestUser();
+		const attacker = await createTestUser();
+		const dir = await createTestDirectory(owner._id);
+		const created = await readyFile(owner, dir);
+		const mint = await initiateUpload(dir._id, owner._id, "notes.txt", 10, 1_000_000);
+
+		await expect(createDownloadUrl(mint.fileId, owner._id)).rejects.toMatchObject({
+			code: "FILE_NOT_FOUND",
+			statusCode: 404,
+		});
+		await expect(createDownloadUrl(created._id, attacker._id)).rejects.toMatchObject({
+			code: "FILE_NOT_FOUND",
+		});
+		await expect(
+			createDownloadUrl(new mongoose.Types.ObjectId(), owner._id),
+		).rejects.toMatchObject({ code: "FILE_NOT_FOUND" });
 	});
 });

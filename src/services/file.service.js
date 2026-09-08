@@ -13,15 +13,16 @@ import { updateAncestorDirectoryStats } from "./directory.service.js";
 import {
 	buildFileKey,
 	presignPut,
+	presignGet,
 	getObjectMetadata,
 	putObject,
 	deleteObject,
 	UPLOAD_URL_TTL_SECONDS,
+	DOWNLOAD_URL_TTL_SECONDS,
 } from "../lib/r2.js";
 import createByteCounter from "../utils/byteCounter.js";
-import { mimeFromExtension } from "../utils/mimeType.js";
+import { mimeFromExtension, isInlineSafe } from "../utils/mimeType.js";
 import { FIFTEEN_MINUTES_MS, ONE_HOUR_MS } from "../utils/date.js";
-import { buildFilePath } from "../utils/storagePath.js";
 
 import envConfig from "../constants/env.js";
 import httpStatus from "../constants/httpStatus.js";
@@ -152,27 +153,66 @@ const validateAndBuildNewFile = async (parentDirId, userId, fileName) => {
 	};
 };
 
+const normalizeFileName = (file) => {
+	const named = path.extname(file.name);
+	if (named.toLowerCase() === file.extension) return file.name;
+
+	return `${path.basename(file.name, named)}${file.extension}`;
+};
+
 /**
- * Retrieves a file document and its physical storage path.
+ * Retrieves a ready file owned by the user. A pending upload is quota
+ * bookkeeping, not a file the user has, so it stays invisible here.
  *
  * @param {string} fileId - The ID of the file to fetch
  * @param {string} userId - The owner's ID, for the ownership check
- * @returns {Promise<{file: Object, filePath: string}>} Document and disk path
+ * @returns {Promise<Object>} The file document
  * @throws {AppError} If the file does not exist or the user does not own it
  */
 const getFile = async (fileId, userId) => {
 	const file = await File.findOne({
 		_id: fileId,
 		userId,
+		status: "ready",
 	}).lean();
 
 	if (!file) {
 		throw new AppError("File not found", NOT_FOUND, FILE_NOT_FOUND);
 	}
 
-	const filePath = buildFilePath(file);
+	return file;
+};
 
-	return { file, filePath };
+/**
+ * Mints a short-lived signed GET for a file's bytes.
+ *
+ * @param {string} fileId - The ID of the file to read
+ * @param {string} userId - The owner's ID, for the ownership check
+ * @param {{ download?: boolean }} [options] - `download` forces an attachment
+ * @returns {Promise<{url: string, expiresAt: Date}>} Signed URL and its expiry
+ * @throws {AppError} If the file does not exist or the user does not own it
+ */
+const createDownloadUrl = async (fileId, userId, options = {}) => {
+	const file = await File.findOne({ _id: fileId, userId, status: "ready" })
+		.select("+objectKey")
+		.lean();
+
+	if (!file) {
+		throw new AppError("File not found", NOT_FOUND, FILE_NOT_FOUND);
+	}
+
+	const shouldServeInline = !options.download && isInlineSafe(file.contentType);
+
+	const url = await presignGet(file.objectKey, {
+		contentType: file.contentType,
+		fileName: normalizeFileName(file),
+		inline: shouldServeInline,
+	});
+
+	return {
+		url,
+		expiresAt: new Date(Date.now() + DOWNLOAD_URL_TTL_SECONDS * 1000),
+	};
 };
 
 /**
@@ -521,6 +561,7 @@ const confirmUpload = async (fileId, userId) => {
 export {
 	MIN_UPLOAD_BYTES_PER_SECOND,
 	getFile,
+	createDownloadUrl,
 	uploadFileFromServer,
 	updateFile,
 	deleteFile,
