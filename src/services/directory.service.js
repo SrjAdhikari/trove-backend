@@ -1,20 +1,20 @@
 //* src/services/directory.service.js
 
-import { rm } from "node:fs/promises";
 import mongoose from "mongoose";
 import Directory from "../models/directory.model.js";
 import File from "../models/file.model.js";
 import AppError from "../errors/AppError.js";
-import { buildFilePath } from "../utils/storagePath.js";
+import { deleteObject } from "../lib/r2.js";
 import httpStatus from "../constants/httpStatus.js";
 import appErrorCode from "../constants/appErrorCode.js";
 import { generateBreadCrumb, generatePath } from "../utils/path.js";
 
-const { NOT_FOUND, BAD_REQUEST } = httpStatus;
+const { NOT_FOUND, BAD_REQUEST, CONFLICT } = httpStatus;
 const {
 	DIRECTORY_NOT_FOUND,
 	DIRECTORY_RENAME_FAILED,
 	DIRECTORY_DELETE_FAILED,
+	UPLOAD_IN_PROGRESS,
 } = appErrorCode;
 
 // User-facing label for the root directory, which is stored as `root-<email>`.
@@ -41,8 +41,11 @@ const getDirectory = async (directoryId, userId) => {
 		throw new AppError("Directory not found", NOT_FOUND, DIRECTORY_NOT_FOUND);
 	}
 
+	// Fetch the immediate files, child directories, and ancestor names in parallel
 	const [files, childDirs, ancestors] = await Promise.all([
-		File.find({ parentDirId: directory._id, userId }).lean(),
+		File.find({ parentDirId: directory._id, userId, status: "ready" })
+			.select("-status -uploadExpiresAt")
+			.lean(),
 		Directory.find({ parentDirId: directory._id, userId }).lean(),
 		resolveDirectoryNames(directory.ancestorIds, userId),
 	]);
@@ -51,6 +54,10 @@ const getDirectory = async (directoryId, userId) => {
 	if (breadcrumb.length) breadcrumb[0].name = ROOT_DISPLAY_NAME;
 
 	const path = generatePath(breadcrumb);
+	const filesForResponse = files.map((file) => ({
+		...file,
+		id: file._id,
+	}));
 
 	// Expose the stored subtree size as `totalSize`; drop the raw `size` and the
 	// internal `ancestorIds` from the response (top-level and each child).
@@ -67,7 +74,7 @@ const getDirectory = async (directoryId, userId) => {
 		totalSize: size,
 		breadcrumb,
 		path,
-		files: files.map((file) => ({ ...file, id: file._id })),
+		files: filesForResponse,
 		childDirectories,
 	};
 };
@@ -173,8 +180,8 @@ const updateDirectory = async (directoryId, newDirName, userId) => {
  * @throws {AppError} If the directory does not exist or the user does not own it
  */
 const deleteDirectory = async (directoryId, userId) => {
-	// Step 1: Find the directory and nested subdirectories recursively
-	const rootDir = await getAllNestedDirectories(directoryId, userId);
+	// Step 1: Find the directory to delete
+	const rootDir = await Directory.findOne({ _id: directoryId, userId }).lean();
 
 	if (!rootDir) {
 		throw new AppError("Directory not found", NOT_FOUND, DIRECTORY_NOT_FOUND);
@@ -189,28 +196,69 @@ const deleteDirectory = async (directoryId, userId) => {
 		);
 	}
 
-	// Step 2: Collect all directory IDs including nested ones
-	const allDirIds = [
-		rootDir._id,
-		...rootDir.subDirectories.map((dir) => dir._id),
-	];
+	// Step 2: Every directory in the subtree. `ancestorIds` has no depth limit,
+	// so the guard below sees everything the refund is about to subtract.
+	const descendants = await Directory.find(
+		{ userId, ancestorIds: rootDir._id },
+		"_id",
+	).lean();
+	const allDirIds = [rootDir._id, ...descendants.map((dir) => dir._id)];
 
 	// Step 3: Fetch all files within these directories belonging to the user
 	const allFiles = await File.find({
 		parentDirId: { $in: allDirIds },
 		userId,
-	}).lean();
+	})
+		.select("+objectKey")
+		.lean();
 
-	// Step 4: Build all physical file paths. buildFilePath throws on any path
-	// that escapes STORAGE_ROOT, so a malicious entry aborts the whole delete
-	// here — before Step 5 touches the DB.
-	const filePaths = allFiles.map((file) => buildFilePath(file));
+	// Step 4: Block only while a presigned URL could still write. A pending
+	// upload past its deadline is dead weight and is deleted with the rest.
+	const now = new Date();
+	const hasLiveUpload = allFiles.some(
+		(file) =>
+			file.status !== "ready" &&
+			(!file.uploadExpiresAt || file.uploadExpiresAt > now),
+	);
+
+	if (hasLiveUpload) {
+		throw new AppError(
+			"Directory has uploads in progress; try again shortly",
+			CONFLICT,
+			UPLOAD_IN_PROGRESS,
+		);
+	}
 
 	// Step 5: Delete all files and directories from the DB atomically
 	const session = await mongoose.startSession();
 
 	try {
 		await session.withTransaction(async () => {
+			const hasLiveUploadNow = await File.exists({
+				parentDirId: { $in: allDirIds },
+				userId,
+				status: { $ne: "ready" },
+				$or: [
+					{ uploadExpiresAt: { $exists: false } },
+					{ uploadExpiresAt: { $gt: new Date() } },
+				],
+			}).session(session);
+
+			if (hasLiveUploadNow) {
+				throw new AppError(
+					"Directory has uploads in progress; try again shortly",
+					CONFLICT,
+					UPLOAD_IN_PROGRESS,
+				);
+			}
+
+			// Fetch the current totals for the root directory before deletion
+			const currentTotals = await Directory.findById(
+				rootDir._id,
+				"size fileCount",
+				{ session },
+			).lean();
+
 			await File.deleteMany(
 				{ parentDirId: { $in: allDirIds }, userId },
 				{ session },
@@ -225,8 +273,8 @@ const deleteDirectory = async (directoryId, userId) => {
 			await updateAncestorDirectoryStats(
 				rootDir.parentDirId,
 				{
-					bytes: -rootDir.size,
-					files: -rootDir.fileCount,
+					bytes: -(currentTotals?.size ?? 0),
+					files: -(currentTotals?.fileCount ?? 0),
 					folders: -allDirIds.length,
 				},
 				session,
@@ -236,57 +284,20 @@ const deleteDirectory = async (directoryId, userId) => {
 		session.endSession();
 	}
 
-	// Step 6: Delete all physical files after successful DB transaction
-	await Promise.allSettled(filePaths.map((filePath) => rm(filePath)));
+	// Step 6: Delete the physical files from R2
+	await Promise.allSettled(
+		allFiles.map(async (file) => {
+			try {
+				await deleteObject(file.objectKey);
+			} catch (error) {
+				console.warn(
+					`Failed to remove the object for file ${file._id}: ${error.name} ${error.$metadata?.httpStatusCode ?? ""}`.trim(),
+				);
+			}
+		}),
+	);
 
 	return rootDir;
-};
-
-/**
- * Recursively fetches a directory and all of its subdirectories.
- *
- * @param {string} directoryId - The ID of the directory to start from
- * @param {string} userId - The ID of the authenticated user
- * @returns {Promise<Object>} The directory with all nested subdirectories
- */
-const getAllNestedDirectories = async (directoryId, userId) => {
-	// Convert IDs to Mongoose ObjectIds for reliable matching
-	const directoryObjectId = new mongoose.Types.ObjectId(directoryId);
-	const userObjectId = new mongoose.Types.ObjectId(userId);
-
-	const result = await Directory.aggregate([
-		// Step 1: Find the single directory we want to start from
-		{
-			$match: {
-				_id: directoryObjectId,
-				userId: userObjectId,
-			},
-		},
-
-		/**
-		 * Step 2: Recursively collect all nested subdirectories
-		 * In plain English:
-		 *  Find all directories whose parentDirId equals my _id,
-		 *  then find all directories whose parentDirId equals THEIR _id,
-		 *  and keep going until no more children are found.
-		 */
-		{
-			$graphLookup: {
-				from: "directories",
-				startWith: "$_id",
-				connectFromField: "_id",
-				connectToField: "parentDirId",
-				as: "subDirectories",
-				maxDepth: 20,
-				restrictSearchWithMatch: {
-					userId: userObjectId,
-				},
-			},
-		},
-	]);
-
-	// result is an array with at most one element (from $match)
-	return result[0];
 };
 
 /**

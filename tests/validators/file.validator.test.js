@@ -1,9 +1,106 @@
 import { describe, it, expect } from "vitest";
 
 import {
+	initiateUploadSchema,
 	renameFileSchema,
 	sanitizeFileName,
 } from "../../src/validators/file.validator.js";
+import envConfig from "../../src/constants/env.js";
+
+const { MAX_FILE_UPLOAD_SIZE } = envConfig;
+
+describe("initiateUploadSchema", () => {
+	it("accepts a well-formed body", () => {
+		const result = initiateUploadSchema.safeParse({
+			name: "notes.txt",
+			size: 100,
+		});
+
+		expect(result.success).toBe(true);
+		expect(result.data).toEqual({ name: "notes.txt", size: 100 });
+	});
+
+	it("accepts the exact upload cap", () => {
+		expect(
+			initiateUploadSchema.safeParse({
+				name: "notes.txt",
+				size: MAX_FILE_UPLOAD_SIZE,
+			}).success,
+		).toBe(true);
+	});
+
+	it("sanitizes the name before the length check", () => {
+		const result = initiateUploadSchema.safeParse({
+			name: "  ../../rep\tort<script>alert(1)</script>.pdf  ",
+			size: 10,
+		});
+
+		expect(result.success).toBe(true);
+		expect(result.data.name).toBe("report.pdf");
+	});
+
+	it("caps an over-long name at 255 characters rather than rejecting it", () => {
+		const result = initiateUploadSchema.safeParse({
+			name: `${"a".repeat(300)}.txt`,
+			size: 10,
+		});
+
+		expect(result.success).toBe(true);
+		expect(result.data.name).toHaveLength(255);
+	});
+
+	it("rejects a name that is too short only after sanitization", () => {
+		expect(
+			initiateUploadSchema.safeParse({ name: "<b>x</b>", size: 100 }).success,
+		).toBe(false);
+	});
+
+	it("rejects a missing, empty, or non-string name", () => {
+		for (const name of [undefined, null, "", "   ", 42, ["a.txt"], { $ne: "" }]) {
+			expect(initiateUploadSchema.safeParse({ name, size: 100 }).success).toBe(
+				false,
+			);
+		}
+	});
+
+	it("rejects a non-positive, fractional, or oversized size", () => {
+		for (const size of [0, -1, -100, 1.5, MAX_FILE_UPLOAD_SIZE + 1]) {
+			expect(
+				initiateUploadSchema.safeParse({ name: "notes.txt", size }).success,
+			).toBe(false);
+		}
+	});
+
+	it("rejects a missing or non-numeric size (operator-injection shape)", () => {
+		for (const size of [
+			undefined,
+			null,
+			"100",
+			Number.NaN,
+			Number.POSITIVE_INFINITY,
+			{ $gt: 0 },
+			[100],
+			true,
+		]) {
+			expect(
+				initiateUploadSchema.safeParse({ name: "notes.txt", size }).success,
+			).toBe(false);
+		}
+	});
+
+	it("drops unknown keys instead of forwarding them to the service", () => {
+		const result = initiateUploadSchema.safeParse({
+			name: "notes.txt",
+			size: 10,
+			status: "ready",
+			objectKey: "files/attacker-controlled.txt",
+			parentDirId: { $ne: null },
+		});
+
+		expect(result.success).toBe(true);
+		expect(result.data).toEqual({ name: "notes.txt", size: 10 });
+	});
+});
 
 describe("renameFileSchema", () => {
 	it("accepts a valid new file name", () => {
@@ -57,8 +154,8 @@ describe("renameFileSchema", () => {
 	});
 });
 
-// Exported so the file upload controller can reuse the same normalization for
-// the filename header (which never passes through validateBody).
+// Exported so every schema in this file shares one normalization, and so the
+// rules below are pinned independently of the schemas that apply them.
 describe("sanitizeFileName", () => {
 	it("returns an ordinary file name unchanged", () => {
 		expect(sanitizeFileName("report.pdf")).toBe("report.pdf");

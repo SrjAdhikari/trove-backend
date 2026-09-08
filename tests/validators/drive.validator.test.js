@@ -89,24 +89,32 @@ describe("importDriveSchema", () => {
 		expect(importDriveSchema.safeParse(valid).success).toBe(true);
 	});
 
-	it("accepts a string parentDirId", () => {
-		expect(
-			importDriveSchema.safeParse({ ...valid, parentDirId: "65abc" }).success,
-		).toBe(true);
+	it("rejects a parentDirId that is not a valid ObjectId", () => {
+		// Reaches Directory.findOne directly, so the shape is checked at the
+		// boundary rather than left to surface as a Mongoose CastError.
+		for (const parentDirId of [
+			"65abc",
+			"not-an-objectid",
+			"68b0f2c1a4d3e5f60718293",
+			"68b0f2c1a4d3e5f60718293az",
+			"ZZZZZZZZZZZZZZZZZZZZZZZZ",
+			"",
+			"   ",
+		]) {
+			expect(
+				importDriveSchema.safeParse({ ...valid, parentDirId }).success,
+			).toBe(false);
+		}
 	});
 
-	it("trims surrounding whitespace from parentDirId", () => {
+	it("accepts a well-formed parentDirId", () => {
 		const result = importDriveSchema.safeParse({
 			...valid,
-			parentDirId: "  65abc  ",
+			parentDirId: "  68b0f2c1a4d3e5f60718293a  ",
 		});
-		expect(result.data.parentDirId).toBe("65abc");
-	});
 
-	it("collapses a whitespace-only parentDirId to empty (root fallback downstream)", () => {
-		const result = importDriveSchema.safeParse({ ...valid, parentDirId: "   " });
 		expect(result.success).toBe(true);
-		expect(result.data.parentDirId).toBe("");
+		expect(result.data.parentDirId).toBe("68b0f2c1a4d3e5f60718293a");
 	});
 
 	it("rejects a non-string parentDirId", () => {

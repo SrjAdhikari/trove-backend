@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [develop, main]
+  push:
+    branches: [develop, main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    # env.js throws at import for any missing variable, so all of
+    # them must be set even where a test never reaches the service.
+    env:
+      PORT: 5001
+      NODE_ENV: test
+      APP_ORIGIN: http://localhost:5173
+      API_URL: http://localhost:5001
+
+      # Never dialled — the suite boots its own in-memory replica set.
+      MONGODB_URI: mongodb://127.0.0.1:27017/unused
+      GOOGLE_CLIENT_ID: ci-placeholder
+      GITHUB_CLIENT_ID: ci-placeholder
+      GITHUB_CLIENT_SECRET: ci-placeholder
+      COOKIE_SECRET: ci-placeholder-cookie-secret
+      MAX_ALLOWED_DEVICES: 2
+      RESEND_API_KEY: re_ci_placeholder
+      EMAIL_FROM: ci@example.com
+
+      MAX_FILE_UPLOAD_SIZE: 100000000
+      MAX_DRIVE_IMPORT_SIZE: 200000000
+      MAX_PROFILE_PICTURE_SIZE: 2000000
+      DEFAULT_STORAGE_LIMIT: 700000000
+
+      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      R2_BUCKET: ${{ secrets.R2_BUCKET }}
+
+      # Not read by the app: pins where mongodb-memory-server puts its binary so
+      # the cache step below can find it. Default location varies by version.
+      MONGOMS_DOWNLOAD_DIR: ${{ github.workspace }}/.cache/mongodb-binaries
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20 # package.json engines: >=20.11.0
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Cache the MongoDB binary
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.cache/mongodb-binaries
+          key: mongodb-binaries-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Test
+        run: npm test

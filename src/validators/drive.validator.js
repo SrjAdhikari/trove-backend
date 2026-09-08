@@ -2,6 +2,7 @@
 
 import { z } from "zod";
 
+const OBJECT_ID_PATTERN = /^[a-f0-9]{24}$/;
 const MAX_ACCESS_TOKEN_LENGTH = 4096;
 const MAX_ITEMS_PER_REQUEST = 50;
 
@@ -28,6 +29,7 @@ const importDriveSchema = z.object({
 	parentDirId: z
 		.string("parentDirId must be a string when provided")
 		.trim()
+		.regex(OBJECT_ID_PATTERN, "Invalid directory id")
 		.optional(),
 });
 

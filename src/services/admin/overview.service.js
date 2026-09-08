@@ -44,6 +44,7 @@ const getSystemOverview = async () => {
 		User.countDocuments({ role: ROLES.ADMIN }),
 		User.countDocuments({ role: ROLES.SUPERADMIN }),
 		File.aggregate([
+			{ $match: { status: "ready" } },
 			{
 				$group: {
 					_id: null,

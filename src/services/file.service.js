@@ -2,75 +2,129 @@
 
 import mongoose from "mongoose";
 import path from "node:path";
-import { rm } from "node:fs/promises";
-import { createWriteStream } from "node:fs";
-import { pipeline } from "node:stream/promises";
+import { randomBytes } from "node:crypto";
+import { pipeline } from "node:stream";
 
 import File from "../models/file.model.js";
 import Directory from "../models/directory.model.js";
 
 import { updateAncestorDirectoryStats } from "./directory.service.js";
 
+import {
+	buildFileKey,
+	presignPut,
+	presignGet,
+	getObjectMetadata,
+	putObject,
+	deleteObject,
+	UPLOAD_URL_TTL_SECONDS,
+	DOWNLOAD_URL_TTL_SECONDS,
+} from "../lib/r2.js";
 import createByteCounter from "../utils/byteCounter.js";
-import { buildFilePath } from "../utils/storagePath.js";
+import { mimeFromExtension, isInlineSafe } from "../utils/mimeType.js";
+import { FIFTEEN_MINUTES_MS, ONE_HOUR_MS } from "../utils/date.js";
 
+import envConfig from "../constants/env.js";
 import httpStatus from "../constants/httpStatus.js";
 import appErrorCode from "../constants/appErrorCode.js";
 import AppError from "../errors/AppError.js";
 
-const { NOT_FOUND, BAD_REQUEST, INTERNAL_SERVER_ERROR } = httpStatus;
+const { NOT_FOUND, BAD_REQUEST, CONFLICT, INTERNAL_SERVER_ERROR } = httpStatus;
 const {
 	FILE_NOT_FOUND,
 	DIRECTORY_NOT_FOUND,
 	FILE_UPLOAD_FAILED,
 	FILE_TOO_LARGE,
 	STORAGE_LIMIT_EXCEEDED,
+	INVALID_INPUT,
+	UPLOAD_INCOMPLETE,
+	UPLOAD_OBJECT_MISMATCH,
+	UPLOAD_ALREADY_CONFIRMED,
+	UPLOAD_IN_PROGRESS,
 } = appErrorCode;
 
-const MAX_FILE_UPLOAD_SIZE = 100 * 1000 * 1000;
+const { MAX_FILE_UPLOAD_SIZE } = envConfig;
 
-/**
- * Retrieves a file document and its physical storage path.
- *
- * @param {string} fileId - The ID of the file to fetch
- * @param {string} userId - The ID of the authenticated user to verify ownership
- * @returns {Promise<{file: Object, filePath: string}>} The file document and its absolute disk path
- * @throws {AppError} If the file does not exist or the user does not own it
- */
-const getFile = async (fileId, userId) => {
-	const file = await File.findOne({
-		_id: fileId,
-		userId,
-	}).lean();
+const MIN_UPLOAD_BYTES_PER_SECOND = 16_000;
 
-	if (!file) {
-		throw new AppError("File not found", NOT_FOUND, FILE_NOT_FOUND);
+const isValidStorageLimit = (limit) =>
+	Number.isFinite(limit) || limit === Number.POSITIVE_INFINITY;
+
+const isUploadStillLive = (file) =>
+	file.status !== "ready" &&
+	(!file.uploadExpiresAt || file.uploadExpiresAt > new Date());
+
+const releaseReservedBytes = async (fileId, parentDirId, bytes) => {
+	const mongooseSession = await mongoose.startSession();
+
+	try {
+		await mongooseSession.withTransaction(async () => {
+			const { deletedCount } = await File.deleteOne(
+				{ _id: fileId, status: "pending" },
+				{ session: mongooseSession },
+			);
+
+			if (deletedCount === 1) {
+				await updateAncestorDirectoryStats(
+					parentDirId,
+					{ bytes: -bytes, files: -1 },
+					mongooseSession,
+				);
+			}
+		});
+	} finally {
+		await mongooseSession.endSession();
 	}
+};
 
-	// Construct the physical storage path using the file's ObjectId as the filename
-	const filePath = buildFilePath(file);
+const matchSizeAndType = (fileMetadata, file) =>
+	Boolean(fileMetadata) &&
+	fileMetadata.size === file.size &&
+	fileMetadata.contentType === file.contentType;
 
-	return { file, filePath };
+const removeObject = async (objectKey, fileId) => {
+	try {
+		await deleteObject(objectKey);
+	} catch (error) {
+		console.warn(
+			`Failed to remove the object for file ${fileId}: ${error.name} ${error.$metadata?.httpStatusCode ?? ""}`.trim(),
+		);
+	}
+};
+
+const checkQuota = async (userId, bytes, totalStorageLimit, session) => {
+	const rootDir = await Directory.findOne(
+		{ userId, parentDirId: null },
+		"size",
+		{ session },
+	);
+
+	if (
+		!isValidStorageLimit(totalStorageLimit) ||
+		(rootDir?.size ?? 0) + bytes > totalStorageLimit
+	) {
+		throw new AppError(
+			"Storage limit exceeded",
+			BAD_REQUEST,
+			STORAGE_LIMIT_EXCEEDED,
+		);
+	}
 };
 
 /**
- * Uploads a file into a specified parent directory.
- *
- * @param {string} parentDirId - The ID of the target parent directory
- * @param {string} userId - The ID of the authenticated user to verify ownership
- * @param {string} fileName - The original filename provided by the user
- * @param {import("node:stream").Readable} fileStream - The readable stream of file data
- * @param {number} totalStorageLimit - The user's quota in bytes (from req.user)
- * @returns {Promise<Object>} The newly created file document
- * @throws {AppError} If the parent directory is not found, the quota is exceeded, or the file write fails
+ * Verifies the parent directory belongs to the user and creates the new
+ * file's identity. Shared by both upload paths so they cannot drift apart.
  */
-const uploadFile = async (
-	parentDirId,
-	userId,
-	fileName,
-	fileStream,
-	totalStorageLimit,
-) => {
+const validateAndBuildNewFile = async (parentDirId, userId, fileName) => {
+	const extension = path.extname(fileName).toLowerCase();
+	if (!/^\.[a-z0-9]+$/.test(extension)) {
+		throw new AppError(
+			"File name must end in a simple extension",
+			BAD_REQUEST,
+			INVALID_INPUT,
+		);
+	}
+
 	const parentDir = await Directory.findOne({
 		_id: parentDirId,
 		userId,
@@ -84,20 +138,118 @@ const uploadFile = async (
 		);
 	}
 
-	const extension = path.extname(fileName);
 	const fileId = new mongoose.Types.ObjectId();
-	const filePath = buildFilePath({ _id: fileId, extension });
 
-	// Count bytes mid-stream so we can both persist the size and enforce the cap
-	const counter = createByteCounter(MAX_FILE_UPLOAD_SIZE);
+	return {
+		parentDir,
+		extension,
+		fileId,
+		objectKey: buildFileKey(
+			fileId.toString(),
+			randomBytes(16).toString("hex"),
+			extension,
+		),
+		contentType: mimeFromExtension(extension),
+	};
+};
 
-	// Stream to disk OUTSIDE the transaction — a non-retryable side effect.
+const normalizeFileName = (file) => {
+	const named = path.extname(file.name);
+	if (named.toLowerCase() === file.extension) return file.name;
+
+	return `${path.basename(file.name, named)}${file.extension}`;
+};
+
+/**
+ * Retrieves a ready file owned by the user. A pending upload is quota
+ * bookkeeping, not a file the user has, so it stays invisible here.
+ *
+ * @param {string} fileId - The ID of the file to fetch
+ * @param {string} userId - The owner's ID, for the ownership check
+ * @returns {Promise<Object>} The file document
+ * @throws {AppError} If the file does not exist or the user does not own it
+ */
+const getFile = async (fileId, userId) => {
+	const file = await File.findOne({
+		_id: fileId,
+		userId,
+		status: "ready",
+	}).lean();
+
+	if (!file) {
+		throw new AppError("File not found", NOT_FOUND, FILE_NOT_FOUND);
+	}
+
+	return file;
+};
+
+/**
+ * Mints a short-lived signed GET for a file's bytes.
+ *
+ * @param {string} fileId - The ID of the file to read
+ * @param {string} userId - The owner's ID, for the ownership check
+ * @param {{ download?: boolean }} [options] - `download` forces an attachment
+ * @returns {Promise<{url: string, expiresAt: Date}>} Signed URL and its expiry
+ * @throws {AppError} If the file does not exist or the user does not own it
+ */
+const createDownloadUrl = async (fileId, userId, options = {}) => {
+	const file = await File.findOne({ _id: fileId, userId, status: "ready" })
+		.select("+objectKey")
+		.lean();
+
+	if (!file) {
+		throw new AppError("File not found", NOT_FOUND, FILE_NOT_FOUND);
+	}
+
+	const shouldServeInline = !options.download && isInlineSafe(file.contentType);
+
+	const url = await presignGet(file.objectKey, {
+		contentType: file.contentType,
+		fileName: normalizeFileName(file),
+		inline: shouldServeInline,
+	});
+
+	return {
+		url,
+		expiresAt: new Date(Date.now() + DOWNLOAD_URL_TTL_SECONDS * 1000),
+	};
+};
+
+/**
+ * Uploads a file from a server-held stream — Drive import and the cutover
+ * script, where the bytes reach the server first so a presigned PUT is not an
+ * option. Returns the raw document, key included: every caller is server-side.
+ *
+ * @param {string} parentDirId - The ID of the target parent directory
+ * @param {string} userId - The owner's ID, for the ownership check
+ * @param {string} fileName - The sanitized filename provided by the caller
+ * @param {import("node:stream").Readable} fileStream - The bytes to store
+ * @param {number} totalStorageLimit - Quota in bytes. Pass
+ *   `Number.POSITIVE_INFINITY` to declare an exemption (issue #65)
+ * @param {number} [perFileCap=MAX_FILE_UPLOAD_SIZE] - Per-file byte ceiling
+ * @returns {Promise<Object>} The newly created file document
+ * @throws {AppError} Unknown parent, bad extension, quota exceeded, or upload failure
+ */
+const uploadFileFromServer = async (
+	parentDirId,
+	userId,
+	fileName,
+	fileStream,
+	totalStorageLimit,
+	perFileCap = MAX_FILE_UPLOAD_SIZE,
+) => {
+	const { parentDir, extension, fileId, objectKey, contentType } =
+		await validateAndBuildNewFile(parentDirId, userId, fileName);
+
+	const byteCounter = createByteCounter(perFileCap);
+	const countedStream = pipeline(fileStream, byteCounter.stream, () => {});
+
 	try {
-		await pipeline(fileStream, counter.stream, createWriteStream(filePath));
+		await putObject(objectKey, countedStream, { contentType });
 	} catch (error) {
-		await rm(filePath, { force: true });
+		await removeObject(objectKey, fileId);
 
-		if (counter.state.tripped) {
+		if (byteCounter.state.tripped) {
 			throw new AppError(
 				"File exceeds upload size cap",
 				BAD_REQUEST,
@@ -112,27 +264,13 @@ const uploadFile = async (
 		);
 	}
 
-	const bytes = counter.state.bytes;
+	const bytes = byteCounter.state.bytes;
 	const mongooseSession = await mongoose.startSession();
 	let file;
 
 	try {
 		await mongooseSession.withTransaction(async () => {
-			// Check inside the transaction: the $inc below makes concurrent
-			// uploads conflict and retry, so they can't both pass the quota.
-			const rootDir = await Directory.findOne(
-				{ userId, parentDirId: null },
-				"size",
-				{ session: mongooseSession },
-			);
-			const usedBytes = rootDir?.size ?? 0;
-			if (usedBytes + bytes > totalStorageLimit) {
-				throw new AppError(
-					"Storage limit exceeded",
-					BAD_REQUEST,
-					STORAGE_LIMIT_EXCEEDED,
-				);
-			}
+			await checkQuota(userId, bytes, totalStorageLimit, mongooseSession);
 
 			const created = await File.create(
 				[
@@ -140,9 +278,12 @@ const uploadFile = async (
 						_id: fileId,
 						name: fileName,
 						extension,
+						contentType,
 						size: bytes,
 						parentDirId: parentDir._id,
 						userId,
+						status: "ready",
+						objectKey,
 					},
 				],
 				{ session: mongooseSession },
@@ -156,7 +297,7 @@ const uploadFile = async (
 			);
 		});
 	} catch (error) {
-		await rm(filePath, { force: true });
+		await removeObject(objectKey, fileId);
 		if (error instanceof AppError) throw error;
 		throw new AppError(
 			"Failed to upload file",
@@ -175,13 +316,13 @@ const uploadFile = async (
  *
  * @param {string} fileId - The ID of the file to rename
  * @param {string} newFileName - The new name for the file
- * @param {string} userId - The ID of the authenticated user to verify ownership
+ * @param {string} userId - The owner's ID, for the ownership check
  * @returns {Promise<Object>} The updated file document
- * @throws {AppError} If the file does not exist or the user does not own it
+ * @throws {AppError} Missing, still a pending upload, or not owned by the user
  */
 const updateFile = async (fileId, newFileName, userId) => {
 	const updatedFile = await File.findOneAndUpdate(
-		{ _id: fileId, userId },
+		{ _id: fileId, userId, status: "ready" },
 		{ name: newFileName },
 		{ new: true, runValidators: true },
 	).lean();
@@ -194,21 +335,31 @@ const updateFile = async (fileId, newFileName, userId) => {
 };
 
 /**
- * Deletes a file's DB record and its physical storage.
+ * Deletes a file's DB record and its stored object.
  *
  * @param {string} fileId - The ID of the file to delete
- * @param {string} userId - The ID of the authenticated user to verify ownership
+ * @param {string} userId - The owner's ID, for the ownership check
  * @returns {Promise<Object>} The deleted file document
- * @throws {AppError} If the file does not exist or the user does not own it
+ * @throws {AppError} Missing, still uploading, or not owned by the user
  */
 const deleteFile = async (fileId, userId) => {
-	const file = await File.findOne({ _id: fileId, userId }).lean();
+	const file = await File.findOne({ _id: fileId, userId })
+		.select("+objectKey")
+		.lean();
 
 	if (!file) {
 		throw new AppError("File not found", NOT_FOUND, FILE_NOT_FOUND);
 	}
 
-	const filePath = buildFilePath(file);
+	const { objectKey, ...responseFile } = file;
+
+	if (isUploadStillLive(file)) {
+		throw new AppError(
+			"Upload in progress; this file cannot be deleted yet",
+			CONFLICT,
+			UPLOAD_IN_PROGRESS,
+		);
+	}
 
 	const mongooseSession = await mongoose.startSession();
 	try {
@@ -227,10 +378,193 @@ const deleteFile = async (fileId, userId) => {
 		await mongooseSession.endSession();
 	}
 
-	// Physical file removed outside the transaction — non-retryable side effect.
-	await rm(filePath, { force: true });
+	await removeObject(objectKey, file._id);
 
-	return file;
+	return responseFile;
 };
 
-export { getFile, uploadFile, updateFile, deleteFile };
+/**
+ * Mints a presigned PUT and reserves the declared bytes against the quota.
+ *
+ * @param {string} parentDirId - The ID of the target parent directory
+ * @param {string} userId - The owner's ID, for the ownership check
+ * @param {string} fileName - The sanitized filename provided by the user
+ * @param {number} declaredSize - The byte length the client promises to upload
+ * @param {number} totalStorageLimit - The user's quota in bytes (from req.user)
+ * @returns {Promise<{fileId: string, uploadUrl: string, contentType: string,
+ *   expiresAt: Date, uploadExpiresAt: Date}>} `expiresAt` is the URL TTL;
+ *   `uploadExpiresAt` is when the pending upload is given up on
+ * @throws {AppError} Bad or oversized size, unknown parent, or quota exceeded
+ */
+const initiateUpload = async (
+	parentDirId,
+	userId,
+	fileName,
+	declaredSize,
+	totalStorageLimit,
+) => {
+	if (!Number.isInteger(declaredSize) || declaredSize <= 0) {
+		throw new AppError("Invalid file size", BAD_REQUEST, INVALID_INPUT);
+	}
+
+	if (declaredSize > MAX_FILE_UPLOAD_SIZE) {
+		throw new AppError(
+			"File exceeds upload size cap",
+			BAD_REQUEST,
+			FILE_TOO_LARGE,
+		);
+	}
+
+	const { parentDir, extension, fileId, objectKey, contentType } =
+		await validateAndBuildNewFile(parentDirId, userId, fileName);
+
+	const uploadDurationMs = (declaredSize / MIN_UPLOAD_BYTES_PER_SECOND) * 1000;
+
+	const uploadExpiresAt = new Date(
+		Date.now() +
+			UPLOAD_URL_TTL_SECONDS * 1000 +
+			Math.min(ONE_HOUR_MS, Math.max(FIFTEEN_MINUTES_MS, uploadDurationMs)),
+	);
+
+	const mongooseSession = await mongoose.startSession();
+	try {
+		await mongooseSession.withTransaction(async () => {
+			await checkQuota(
+				userId,
+				declaredSize,
+				totalStorageLimit,
+				mongooseSession,
+			);
+
+			await File.create(
+				[
+					{
+						_id: fileId,
+						name: fileName,
+						extension,
+						contentType,
+						size: declaredSize,
+						parentDirId: parentDir._id,
+						userId,
+						status: "pending",
+						uploadExpiresAt,
+						objectKey,
+					},
+				],
+				{ session: mongooseSession },
+			);
+
+			await updateAncestorDirectoryStats(
+				parentDir._id,
+				{ bytes: declaredSize, files: 1 },
+				mongooseSession,
+			);
+		});
+	} finally {
+		await mongooseSession.endSession();
+	}
+
+	let uploadUrl;
+	try {
+		uploadUrl = await presignPut(objectKey, {
+			contentType,
+			contentLength: declaredSize,
+		});
+	} catch (error) {
+		await releaseReservedBytes(fileId, parentDir._id, declaredSize);
+
+		throw new AppError(
+			"Failed to start the upload",
+			INTERNAL_SERVER_ERROR,
+			FILE_UPLOAD_FAILED,
+		);
+	}
+
+	return {
+		fileId: fileId.toString(),
+		uploadUrl,
+		contentType,
+		expiresAt: new Date(Date.now() + UPLOAD_URL_TTL_SECONDS * 1000),
+		uploadExpiresAt,
+	};
+};
+
+/**
+ * Confirms that a presigned PUT completed successfully, and promotes the
+ * file from a pending upload to a real file. Until it is called the declared
+ * bytes stay reserved against the owner's quota (see issue #86).
+ *
+ * @param {string} fileId - The ID of the pending file
+ * @param {string} userId - The owner's ID, for the ownership check
+ * @returns {Promise<Object>} The ready file document
+ * @throws {AppError} FILE_NOT_FOUND | UPLOAD_INCOMPLETE | UPLOAD_OBJECT_MISMATCH | UPLOAD_ALREADY_CONFIRMED
+ */
+const confirmUpload = async (fileId, userId) => {
+	const file = await File.findOne({ _id: fileId, userId })
+		.select("+objectKey")
+		.lean();
+
+	if (!file) {
+		throw new AppError("File not found", NOT_FOUND, FILE_NOT_FOUND);
+	}
+
+	const { objectKey, ...fileForResponse } = file;
+
+	const fileMetadata = await getObjectMetadata(objectKey);
+	const matches = matchSizeAndType(fileMetadata, file);
+
+	if (file.status === "ready") {
+		if (matches) return fileForResponse;
+
+		throw new AppError(
+			"This upload has already been completed.",
+			BAD_REQUEST,
+			UPLOAD_ALREADY_CONFIRMED,
+		);
+	}
+
+	if (!fileMetadata) {
+		throw new AppError(
+			"The upload didn't finish. Please try again.",
+			BAD_REQUEST,
+			UPLOAD_INCOMPLETE,
+		);
+	}
+
+	if (!matches) {
+		throw new AppError(
+			"The uploaded file doesn't match what was requested. Please try uploading again.",
+			BAD_REQUEST,
+			UPLOAD_OBJECT_MISMATCH,
+		);
+	}
+
+	const updatedFile = await File.findOneAndUpdate(
+		{ _id: file._id, status: "pending" },
+		{ $set: { status: "ready" }, $unset: { uploadExpiresAt: "" } },
+		{ new: true },
+	).lean();
+
+	if (!updatedFile) {
+		const existingFile = await File.findById(file._id).lean();
+
+		if (!existingFile) {
+			throw new AppError("File not found", NOT_FOUND, FILE_NOT_FOUND);
+		}
+
+		return existingFile;
+	}
+
+	return updatedFile;
+};
+
+export {
+	MIN_UPLOAD_BYTES_PER_SECOND,
+	getFile,
+	createDownloadUrl,
+	uploadFileFromServer,
+	updateFile,
+	deleteFile,
+	initiateUpload,
+	confirmUpload,
+};

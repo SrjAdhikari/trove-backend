@@ -1,9 +1,28 @@
-import { describe, it, expect } from "vitest";
+import { Readable } from "node:stream";
+
+import mongoose from "mongoose";
+import { afterEach, describe, it, expect, vi } from "vitest";
 
 import {
+	importFromDrive,
 	sanitizeDirName,
 	sanitizeFileName,
 } from "../../src/services/drive.service.js";
+
+import {
+	getDriveFileMetadata,
+	downloadDriveFile,
+} from "../../src/lib/googleDrive.js";
+
+vi.mock("../../src/lib/googleDrive.js", async (importOriginal) => ({
+	...(await importOriginal()),
+	getDriveFileMetadata: vi.fn(),
+	downloadDriveFile: vi.fn(),
+}));
+
+afterEach(() => {
+	vi.clearAllMocks();
+});
 
 describe("drive sanitizeDirName", () => {
 	it("returns an ordinary folder name unchanged", () => {
@@ -80,5 +99,40 @@ describe("drive sanitizeFileName", () => {
 	it("mangles a bare '<' (known DOMPurify limitation, see #60)", () => {
 		expect(sanitizeFileName("a<b.txt")).toBe("a__"); // extension lost, padded to min 3
 		expect(sanitizeFileName("5<10.log")).toBe("5&lt;10.log");
+	});
+});
+
+describe("drive importFromDrive", () => {
+	it("destroys the Drive source stream when the upload rejects before reading it", async () => {
+		// Never pushes EOF — a real Drive socket still has bytes in flight, so
+		// nothing but an explicit destroy can close it.
+		const source = new Readable({ read() {} });
+		source.push(Buffer.from("partial drive payload"));
+		// Cancelling the web stream destroys this one *with* a reason, so without a
+		// listener the rejection surfaces as an unhandled error and kills the worker.
+		source.on("error", () => {});
+
+		getDriveFileMetadata.mockResolvedValue({
+			id: "drive-readme",
+			name: "README",
+			mimeType: "text/plain",
+			trashed: false,
+		});
+		downloadDriveFile.mockResolvedValue({ body: Readable.toWeb(source) });
+
+		const result = await importFromDrive(
+			new mongoose.Types.ObjectId().toString(),
+			"drive-access-token",
+			[{ id: "drive-readme", mimeType: "text/plain" }],
+			new mongoose.Types.ObjectId().toString(),
+		);
+
+		// Extensionless name — uploadFileFromServer rejects before it consumes a byte.
+		expect(result.imported).toEqual([]);
+		expect(result.failed).toEqual([
+			{ driveId: "drive-readme", name: "README", reason: "INVALID_INPUT" },
+		]);
+
+		await vi.waitFor(() => expect(source.destroyed).toBe(true));
 	});
 });

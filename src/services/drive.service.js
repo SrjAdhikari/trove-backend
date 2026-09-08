@@ -1,9 +1,9 @@
 //* src/services/drive.service.js
 
 import path from "node:path";
-import { Readable } from "node:stream";
+import { Readable, pipeline } from "node:stream";
 
-import { uploadFile } from "./file.service.js";
+import { uploadFileFromServer } from "./file.service.js";
 import { createDirectory } from "./directory.service.js";
 
 import {
@@ -17,9 +17,12 @@ import {
 import createByteCounter from "../utils/byteCounter.js";
 import sanitizeInput from "../utils/sanitizeInput.js";
 
+import envConfig from "../constants/env.js";
 import httpStatus from "../constants/httpStatus.js";
 import appErrorCode from "../constants/appErrorCode.js";
 import AppError from "../errors/AppError.js";
+
+const { MAX_FILE_UPLOAD_SIZE, MAX_DRIVE_IMPORT_SIZE } = envConfig;
 
 const { BAD_REQUEST } = httpStatus;
 const {
@@ -34,8 +37,6 @@ const SHORTCUT_MIME = "application/vnd.google-apps.shortcut";
 const GOOGLE_APPS_PREFIX = "application/vnd.google-apps.";
 
 // Conservative caps; tune later if real usage warrants it.
-const PER_FILE_CAP_BYTES = 100 * 1000 * 1000;
-const AGGREGATE_CAP_BYTES = 500 * 1000 * 1000;
 const MAX_DEPTH = 20;
 
 /**
@@ -58,7 +59,7 @@ const sanitizeDirName = (name) => {
  * Strips HTML, then produces a filename that satisfies `File.name` (minlength 3,
  * no hard max in schema but we cap at 255 to mirror the manual-upload controller).
  * When `fallbackExt` is supplied (Google-native export), ensures the name carries
- * that extension so `uploadFile`'s `path.extname` derives the correct `File.extension`.
+ * that extension — `uploadFileFromServer` rejects a name without one.
  */
 const sanitizeFileName = (name, fallbackExt = "") => {
 	// sanitizeInput strips HTML and coerces non-strings to "".
@@ -68,7 +69,6 @@ const sanitizeFileName = (name, fallbackExt = "") => {
 		.trim();
 	if (!clean) clean = "untitled";
 
-	// Appends the export extension so `uploadFile`'s `path.extname` derives the correct `File.extension`
 	if (fallbackExt && !clean.toLowerCase().endsWith(fallbackExt.toLowerCase())) {
 		clean = `${clean}${fallbackExt}`;
 	}
@@ -103,7 +103,7 @@ const listAllChildren = async (accessToken, folderId) => {
 
 /**
  * Streams a Drive file (regular download or Google-native export) into the
- * user's tree via the existing `uploadFile` service. Tracks bytes so the
+ * user's tree via the `uploadFileFromServer` service. Tracks bytes so the
  * aggregate cap can be enforced, and short-circuits early when the per-file
  * cap is known up front (regular files with a `size` in metadata).
  */
@@ -120,7 +120,7 @@ const streamFileIntoTrove = async (
 		const declaredSize = Number(meta.size);
 
 		if (Number.isFinite(declaredSize)) {
-			if (declaredSize > PER_FILE_CAP_BYTES) {
+			if (declaredSize > MAX_FILE_UPLOAD_SIZE) {
 				throw new AppError(
 					"File exceeds per-file size cap",
 					BAD_REQUEST,
@@ -128,7 +128,7 @@ const streamFileIntoTrove = async (
 				);
 			}
 
-			if (ctx.totalBytes + declaredSize > AGGREGATE_CAP_BYTES) {
+			if (ctx.totalBytes + declaredSize > MAX_DRIVE_IMPORT_SIZE) {
 				throw new AppError(
 					"Import exceeds aggregate size cap",
 					BAD_REQUEST,
@@ -138,8 +138,8 @@ const streamFileIntoTrove = async (
 		}
 	}
 
-	const remainingBudget = AGGREGATE_CAP_BYTES - ctx.totalBytes;
-	const counter = createByteCounter(PER_FILE_CAP_BYTES, remainingBudget);
+	const remainingBudget = MAX_DRIVE_IMPORT_SIZE - ctx.totalBytes;
+	const counter = createByteCounter(MAX_FILE_UPLOAD_SIZE, remainingBudget);
 
 	let response;
 	if (isGoogleNative) {
@@ -149,26 +149,26 @@ const streamFileIntoTrove = async (
 		response = await downloadDriveFile(ctx.accessToken, meta.id);
 	}
 
-	// fetch gives us a Web ReadableStream; uploadFile's pipeline needs a Node Readable.
-	// Chain: Drive bytes -> counter -> uploadFile's disk writer
 	const webStream = Readable.fromWeb(response.body);
-	webStream.pipe(counter.stream);
-
-	// Destroy the counter stream if the web stream errors out.
-	webStream.on("error", (err) => counter.stream.destroy(err));
+	const counted = pipeline(webStream, counter.stream, () => {});
 
 	try {
-		const uploaded = await uploadFile(
+		const uploaded = await uploadFileFromServer(
 			targetParentDirId,
 			ctx.userId,
 			displayName,
-			counter.stream,
+			counted,
+			// Drive import has no quota of its own until issue #65 lands.
+			Number.POSITIVE_INFINITY,
 		);
 
 		// Only count bytes AFTER a successful upload - failed uploads roll back their bytes
 		ctx.totalBytes += counter.state.bytes;
 		return uploaded;
 	} catch (error) {
+		// The upload can reject before reading a byte, leaving the Drive socket open.
+		counted.destroy();
+
 		if (counter.state.tripped) {
 			throw new AppError(
 				"File exceeds size cap",
@@ -198,7 +198,7 @@ const importItem = async (
 	ctx.seen.add(driveId);
 
 	// Short-circuit once aggregate cap is hit — remaining items all fail fast with the same reason
-	if (ctx.totalBytes >= AGGREGATE_CAP_BYTES) {
+	if (ctx.totalBytes >= MAX_DRIVE_IMPORT_SIZE) {
 		ctx.failed.push({
 			driveId,
 			name: knownMeta?.name ?? null,

@@ -8,20 +8,28 @@
 import { Router } from "express";
 import {
 	getFileHandler,
-	uploadFileHandler,
+	createDownloadUrlHandler,
+	initiateUploadHandler,
+	confirmUploadHandler,
 	updateFileHandler,
 	deleteFileHandler,
 } from "../controllers/file.controller.js";
 
 import authenticate from "../middlewares/auth.middleware.js";
-import { validateBody, validateId } from "../middlewares/validate.middleware.js";
+import {
+	validateBody,
+	validateId,
+} from "../middlewares/validate.middleware.js";
 import {
 	uploadLimiter,
 	readLimiter,
 	mutationLimiter,
 	destructiveLimiter,
 } from "../middlewares/rateLimit.middleware.js";
-import { renameFileSchema } from "../validators/file.validator.js";
+import {
+	initiateUploadSchema,
+	renameFileSchema,
+} from "../validators/file.validator.js";
 
 const fileRouter = Router();
 
@@ -34,16 +42,33 @@ fileRouter.use(authenticate);
 });
 
 /**
+ * Initiate an upload: reserve quota and return a presigned URL
+ * @route POST /api/files/{:parentDirId}
+ */
+fileRouter.post(
+	"{/:parentDirId}",
+	uploadLimiter,
+	validateBody(initiateUploadSchema),
+	initiateUploadHandler,
+);
+
+/**
+ * Confirm a completed upload
+ * @route POST /api/files/{:id}/confirm
+ */
+fileRouter.post("/:id/confirm", mutationLimiter, confirmUploadHandler);
+
+/**
+ * Mint a signed download URL for a file
+ * @route GET /api/files/{:id}/download-url
+ */
+fileRouter.get("/:id/download-url", readLimiter, createDownloadUrlHandler);
+
+/**
  * Get a file by id
  * @route GET /api/files/{:id}
  */
 fileRouter.get("/:id", readLimiter, getFileHandler);
-
-/**
- * Upload a new file
- * @route POST /api/files/{:parentDirId}
- */
-fileRouter.post("{/:parentDirId}", uploadLimiter, uploadFileHandler);
 
 /**
  * Update (Rename) a file

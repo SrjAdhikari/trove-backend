@@ -3,9 +3,10 @@
 import mongoose from "mongoose";
 import bcrypt from "bcrypt";
 
+import envConfig from "../constants/env.js";
 import { ROLES } from "../constants/roles.js";
 
-const DEFAULT_STORAGE_LIMIT = 1 * 1000 * 1000 * 1000;
+const { DEFAULT_STORAGE_LIMIT } = envConfig;
 const { Schema, model } = mongoose;
 
 const userSchema = new Schema(

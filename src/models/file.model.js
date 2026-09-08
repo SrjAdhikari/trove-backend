@@ -16,6 +16,12 @@ const fileSchema = new Schema(
 			required: true,
 			trim: true,
 			lowercase: true,
+			match: /^\.[a-z0-9]+$/,
+		},
+		contentType: {
+			type: String,
+			required: true,
+			trim: true,
 		},
 		size: {
 			type: Number,
@@ -32,6 +38,22 @@ const fileSchema = new Schema(
 			ref: "User",
 			required: true,
 		},
+		status: {
+			type: String,
+			enum: ["pending", "ready"],
+			default: "ready",
+			required: true,
+		},
+		uploadExpiresAt: {
+			type: Date,
+		},
+		objectKey: {
+			type: String,
+			required: true,
+			unique: true,
+			select: false,
+			match: /^files\/[a-f0-9]{24}-[a-f0-9]{32}(\.[a-z0-9]+)?$/,
+		},
 	},
 	{
 		strict: "throw",
@@ -40,6 +62,7 @@ const fileSchema = new Schema(
 );
 
 fileSchema.index({ parentDirId: 1, userId: 1 });
+fileSchema.index({ status: 1, uploadExpiresAt: 1 });
 
 const File = model("File", fileSchema);
 export default File;

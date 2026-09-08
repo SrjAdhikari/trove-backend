@@ -65,7 +65,7 @@ const PROFILE_PICTURE_KEY_PATTERN = new RegExp(
 );
 
 const invalidKey = () =>
-	new AppError("Invalid storage key", BAD_REQUEST, INVALID_INPUT);
+	new AppError("Invalid object key", BAD_REQUEST, INVALID_INPUT);
 
 // Syntax check, never an authorization check: either shape passes here.
 const assertKey = (key) => {
@@ -162,8 +162,8 @@ const presignGet = async (
 const isNotFound = (error) =>
 	error?.name === "NotFound" || error?.$metadata?.httpStatusCode === 404;
 
-// Returns null when the key is absent; otherwise returns the size and content type.
-const headObject = async (key) => {
+// Returns null when the key is absent, or an object with size and contentType when present
+const getObjectMetadata = async (key) => {
 	try {
 		const result = await r2Client.send(
 			new HeadObjectCommand({ Bucket: R2_BUCKET, Key: assertKey(key) }),
@@ -261,7 +261,7 @@ export {
 	buildProfilePictureKey,
 	presignPut,
 	presignGet,
-	headObject,
+	getObjectMetadata,
 	readRange,
 	putObject,
 	deleteObject,

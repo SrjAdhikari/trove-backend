@@ -9,6 +9,7 @@ import {
 	getProfilePicture,
 } from "../../src/services/user.service.js";
 import User from "../../src/models/user.model.js";
+import envConfig from "../../src/constants/env.js";
 import {
 	PROFILE_PICTURES_ROOT,
 	buildProfilePicturePath,
@@ -108,9 +109,12 @@ describe("user.service.uploadProfilePicture", () => {
 		expect(persisted.profilePicture).toBeNull();
 	});
 
-	it("rejects a file larger than the 2 MB cap", async () => {
+	it("rejects a file larger than the configured cap", async () => {
 		const user = await createTestUser();
-		const tooBig = Buffer.concat([PNG, Buffer.alloc(2 * 1000 * 1000)]);
+		const tooBig = Buffer.concat([
+			PNG,
+			Buffer.alloc(envConfig.MAX_PROFILE_PICTURE_SIZE),
+		]);
 
 		await expect(
 			uploadProfilePicture(user._id, Readable.from(tooBig)),

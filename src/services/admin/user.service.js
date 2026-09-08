@@ -1,7 +1,6 @@
 //* src/services/admin/user.service.js
 
 import mongoose from "mongoose";
-import { rm } from "node:fs/promises";
 
 import User from "../../models/user.model.js";
 import File from "../../models/file.model.js";
@@ -13,7 +12,7 @@ import httpStatus from "../../constants/httpStatus.js";
 import appErrorCode from "../../constants/appErrorCode.js";
 import { ROLES, ROLE_RANK } from "../../constants/roles.js";
 import { USER_STATUS, getUserStatus } from "../../utils/userStatus.js";
-import { buildFilePath } from "../../utils/storagePath.js";
+import { deleteObject } from "../../lib/r2.js";
 
 const { BAD_REQUEST, NOT_FOUND, FORBIDDEN } = httpStatus;
 const {
@@ -198,7 +197,7 @@ const getUserById = async (id) => {
 	const [storageAgg, directoryCount, activeSessionCount, lastSession] =
 		await Promise.all([
 			File.aggregate([
-				{ $match: { userId: userObjectId } },
+				{ $match: { userId: userObjectId, status: "ready" } },
 				{
 					$group: {
 						_id: null,
@@ -444,9 +443,11 @@ const hardDeleteUser = async (caller, targetId) => {
 				},
 			]).session(mongooseSession);
 
-			const files = await File.find({ userId: userObjectId }, "_id extension", {
-				session: mongooseSession,
-			}).lean();
+			const files = await File.find(
+				{ userId: userObjectId },
+				"_id objectKey",
+				{ session: mongooseSession },
+			).lean();
 
 			await Session.deleteMany(
 				{ userId: userObjectId },
@@ -477,20 +478,18 @@ const hardDeleteUser = async (caller, targetId) => {
 		await mongooseSession.endSession();
 	}
 
-	const wipeResults = await Promise.allSettled(
-		filesToWipe.map((file) => rm(buildFilePath(file), { force: true })),
+	// Delete the physical files from R2
+	await Promise.allSettled(
+		filesToWipe.map(async (file) => {
+			try {
+				await deleteObject(file.objectKey);
+			} catch (error) {
+				console.warn(
+					`Hard-delete: failed to remove the object for file ${file._id}: ${error.name} ${error.$metadata?.httpStatusCode ?? ""}`.trim(),
+				);
+			}
+		}),
 	);
-
-	// DB is source of truth — disk wipe is best-effort. Log every failure so
-	// orphaned bytes are reconcilable later (path + reason in the warn line).
-	for (const result of wipeResults) {
-		if (result.status === "rejected") {
-			console.warn(
-				"Hard-delete: failed to remove file from disk",
-				result.reason,
-			);
-		}
-	}
 
 	return deletionSummary;
 };

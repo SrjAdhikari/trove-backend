@@ -1,10 +1,13 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect } from "vitest";
+import { Readable } from "node:stream";
+
 import User from "../../../src/models/user.model.js";
 import Session from "../../../src/models/session.model.js";
 import File from "../../../src/models/file.model.js";
 import Directory from "../../../src/models/directory.model.js";
 
 import {
+	getUserById,
 	changeUserRole,
 	suspendUser,
 	unsuspendUser,
@@ -13,6 +16,11 @@ import {
 	hardDeleteUser,
 	restoreUser,
 } from "../../../src/services/admin/user.service.js";
+import {
+	uploadFileFromServer,
+	initiateUpload,
+} from "../../../src/services/file.service.js";
+import { deleteObject, getObjectMetadata } from "../../../src/lib/r2.js";
 
 import { ROLES } from "../../../src/constants/roles.js";
 
@@ -22,6 +30,23 @@ import {
 	createTestDirectory,
 	createTestFile,
 } from "../../factories.js";
+
+// A hard delete removes the document that names the key, so `tests/setup.js`
+// can no longer find it. try/catch around the whole call, never `.catch()`:
+// `assertKey` inside `deleteObject` throws synchronously (invariant 3).
+const createdKeys = new Set();
+const track = (key) => createdKeys.add(key);
+
+afterEach(async () => {
+	await Promise.allSettled(
+		[...createdKeys].map(async (key) => {
+			try {
+				await deleteObject(key);
+			} catch {}
+		}),
+	);
+	createdKeys.clear();
+});
 
 describe("admin/user.service — changeUserRole", () => {
 	it("promotes a user to admin", async () => {
@@ -321,6 +346,58 @@ describe("admin/user.service — hardDeleteUser", () => {
 		});
 		expect(await User.findById(target._id)).toBeNull();
 	});
+
+	it("removes every R2 object the user owned", async () => {
+		const superadmin = await createTestUser({ role: ROLES.SUPERADMIN });
+		const victim = await createTestUser();
+		const dir = await createTestDirectory(victim._id);
+		const file = await uploadFileFromServer(
+			dir._id,
+			victim._id,
+			"doc.txt",
+			Readable.from(["bytes"]),
+			10 ** 6,
+		);
+		track(file.objectKey);
+
+		await hardDeleteUser(superadmin, victim._id);
+
+		expect(await getObjectMetadata(file.objectKey)).toBeNull();
+	});
+
+	it("removes a pending reservation's object too", async () => {
+		const superadmin = await createTestUser({ role: ROLES.SUPERADMIN });
+		const victim = await createTestUser();
+		const dir = await createTestDirectory(victim._id);
+		const body = "reserved";
+
+		const mint = await initiateUpload(
+			dir._id,
+			victim._id,
+			"pending.bin",
+			body.length,
+			10 ** 6,
+		);
+		const { objectKey } = await File.findById(mint.fileId).select("+objectKey").lean();
+		track(objectKey);
+
+		const response = await fetch(mint.uploadUrl, {
+			method: "PUT",
+			headers: {
+				"Content-Type": mint.contentType,
+				"Content-Length": String(body.length),
+			},
+			body,
+		});
+		expect(response.ok).toBe(true);
+
+		// No pending guard here: the account is already doomed, so its bytes go
+		// with it rather than leaving it stranded on a user who is gone.
+		await hardDeleteUser(superadmin, victim._id);
+
+		expect(await getObjectMetadata(objectKey)).toBeNull();
+		expect(await File.countDocuments({ userId: victim._id })).toBe(0);
+	});
 });
 
 describe("admin/user.service — restoreUser", () => {
@@ -379,5 +456,38 @@ describe("admin/user.service — restoreUser", () => {
 		await restoreUser(caller, target._id);
 
 		expect(await Session.countDocuments({ userId: target._id })).toBe(0);
+	});
+});
+
+describe("getUserById excludes pending uploads from the stats", () => {
+	it("counts only ready files in storageBytes and fileCount", async () => {
+		const user = await createTestUser();
+		const dir = await createTestDirectory(user._id);
+
+		await uploadFileFromServer(
+			dir._id,
+			user._id,
+			"real.txt",
+			Readable.from(Buffer.from("12345")),
+			10 ** 9,
+		);
+		await initiateUpload(dir._id, user._id, "pending.txt", 9999, 10 ** 9);
+
+		const result = await getUserById(user._id.toString());
+
+		expect(result.stats.storageBytes).toBe(5);
+		expect(result.stats.fileCount).toBe(1);
+	});
+
+	it("reports zero storage when the user has only pending uploads (boundary)", async () => {
+		const user = await createTestUser();
+		const dir = await createTestDirectory(user._id);
+
+		await initiateUpload(dir._id, user._id, "pending.txt", 4096, 10 ** 9);
+
+		const result = await getUserById(user._id.toString());
+
+		expect(result.stats.storageBytes).toBe(0);
+		expect(result.stats.fileCount).toBe(0);
 	});
 });

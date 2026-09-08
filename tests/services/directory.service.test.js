@@ -1,7 +1,6 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import mongoose from "mongoose";
 import { Readable } from "node:stream";
-import { rm } from "node:fs/promises";
 
 import {
 	updateAncestorDirectoryStats,
@@ -10,10 +9,19 @@ import {
 	getDirectory,
 	resolveDirectoryNames,
 } from "../../src/services/directory.service.js";
-import { uploadFile } from "../../src/services/file.service.js";
-import { buildFilePath } from "../../src/utils/storagePath.js";
+import {
+	uploadFileFromServer,
+	initiateUpload,
+	confirmUpload,
+} from "../../src/services/file.service.js";
+import { deleteObject, getObjectMetadata } from "../../src/lib/r2.js";
 import Directory from "../../src/models/directory.model.js";
-import { createTestUser, createTestDirectory } from "../factories.js";
+import File from "../../src/models/file.model.js";
+import {
+	createTestUser,
+	createTestDirectory,
+	createTestFile,
+} from "../factories.js";
 
 const statsOf = async (id) => {
 	const d = await Directory.findById(id);
@@ -22,10 +30,45 @@ const statsOf = async (id) => {
 
 const folderCountOf = async (id) => (await Directory.findById(id)).folderCount;
 
-const uploadInto = async (parentId, userId, name, body) => {
-	const file = await uploadFile(parentId, userId, name, Readable.from(Buffer.from(body)));
+// The limit is always explicit: `uploadFileFromServer` defaults to the declared
+// server-side exemption, and a test must not silently ride on it.
+const uploadInto = async (parentId, userId, name, body, storageLimit = 10 ** 9) => {
+	const file = await uploadFileFromServer(
+		parentId,
+		userId,
+		name,
+		Readable.from(Buffer.from(body)),
+		storageLimit,
+	);
 	return file;
 };
+
+// Belt and braces: deleteDirectory removes the objects itself, so this only
+// matters when a test asserts before the delete. try/catch around the whole
+// call, never `.catch()`: `assertKey` throws synchronously (invariant 3).
+const discard = async (file) => {
+	try {
+		await deleteObject(file.objectKey);
+	} catch {}
+};
+
+// Objects really land in the dev bucket, and a cascade delete removes the
+// document that names the key, so `tests/setup.js` can no longer find it.
+const createdKeys = new Set();
+const track = (key) => createdKeys.add(key);
+
+afterEach(async () => {
+	await Promise.allSettled(
+		[...createdKeys].map(async (key) => {
+			try {
+				await deleteObject(key);
+			} catch {}
+		}),
+	);
+	createdKeys.clear();
+
+	vi.restoreAllMocks();
+});
 
 describe("updateAncestorDirectoryStats", () => {
 	it("increments the start folder and every ancestor up to root", async () => {
@@ -157,7 +200,7 @@ describe("deleteDirectory maintains ancestor sizes", () => {
 		await deleteDirectory(a._id, user._id);
 
 		expect(await statsOf(root._id)).toEqual({ size: 0, fileCount: 0 });
-		await rm(buildFilePath(file), { force: true });
+		await discard(file);
 	});
 
 	it("decrements by the FULL nested subtree, not just direct children (worst case)", async () => {
@@ -172,7 +215,7 @@ describe("deleteDirectory maintains ancestor sizes", () => {
 		await deleteDirectory(a._id, user._id);
 
 		expect(await statsOf(root._id)).toEqual({ size: 0, fileCount: 0 });
-		await rm(buildFilePath(file), { force: true });
+		await discard(file);
 	});
 
 	it("leaves a sibling subtree's contribution intact (isolation)", async () => {
@@ -188,8 +231,8 @@ describe("deleteDirectory maintains ancestor sizes", () => {
 		await deleteDirectory(a._id, user._id);
 
 		expect(await statsOf(root._id)).toEqual({ size: 2, fileCount: 1 });
-		await rm(buildFilePath(fa), { force: true });
-		await rm(buildFilePath(fs), { force: true });
+		await discard(fa);
+		await discard(fs);
 	});
 
 	it("does not change ancestors when deleting an empty folder (boundary)", async () => {
@@ -252,7 +295,6 @@ describe("getDirectory reads stored sizes", () => {
 		const root = await createTestDirectory(user._id);
 		const child = await createTestDirectory(user._id, { parentDirId: root._id });
 		const file = await uploadInto(child._id, user._id, "f.txt", "123"); // 3
-		await rm(buildFilePath(file), { force: true });
 
 		const data = await getDirectory(root._id, user._id);
 
@@ -287,8 +329,6 @@ describe("getDirectory reads stored sizes", () => {
 		const c2 = await createTestDirectory(user._id, { parentDirId: root._id });
 		const f1 = await uploadInto(c1._id, user._id, "a.txt", "aaaa"); // 4
 		const f2 = await uploadInto(c2._id, user._id, "b.txt", "bb"); // 2
-		await rm(buildFilePath(f1), { force: true });
-		await rm(buildFilePath(f2), { force: true });
 
 		const data = await getDirectory(root._id, user._id);
 
@@ -579,5 +619,400 @@ describe("getDirectory masks the stored root name", () => {
 		expect(data.breadcrumb.map((c) => c.name)).toEqual(["My Files", "Documents"]);
 		expect(data.path).toBe("/My Files/Documents");
 		expect(JSON.stringify(data)).not.toContain(LEAKY_ROOT_NAME);
+	});
+});
+
+describe("getDirectory hides the object key", () => {
+	it("returns files without objectKey, and never anywhere in the payload", async () => {
+		const user = await createTestUser();
+		const root = await createTestDirectory(user._id);
+		const child = await createTestDirectory(user._id, { parentDirId: root._id });
+		const file = await createTestFile(user._id, root._id);
+		await createTestFile(user._id, child._id);
+
+		const data = await getDirectory(root._id, user._id);
+
+		expect(data.files).toHaveLength(1);
+		expect(data.files[0].objectKey).toBeUndefined();
+		// The nonce in the key is an access control; publishing it erodes it.
+		expect(JSON.stringify(data)).not.toContain(file.objectKey);
+
+		// Stripped at the response boundary only — the stored key is intact.
+		expect((await File.findById(file._id).select("+objectKey").lean()).objectKey).toBe(
+			file.objectKey,
+		);
+	});
+
+	it("keeps the rest of the file view intact (no over-stripping)", async () => {
+		const user = await createTestUser();
+		const root = await createTestDirectory(user._id);
+		const file = await createTestFile(user._id, root._id, {
+			name: "notes.txt",
+			size: 42,
+		});
+
+		const [view] = (await getDirectory(root._id, user._id)).files;
+
+		expect(String(view.id)).toBe(String(file._id));
+		expect(view.name).toBe("notes.txt");
+		expect(view.size).toBe(42);
+		expect(view.extension).toBe(".txt");
+		expect(view.contentType).toBe("text/plain; charset=utf-8");
+	});
+});
+
+describe("deleteDirectory removes the subtree's stored objects", () => {
+	it("removes the R2 object of every file in the subtree", async () => {
+		const user = await createTestUser();
+		const root = await createTestDirectory(user._id);
+		// deleteDirectory refuses to delete a root, so the target is a level down.
+		const target = await createTestDirectory(user._id, {
+			parentDirId: root._id,
+		});
+		const child = await createTestDirectory(user._id, {
+			parentDirId: target._id,
+		});
+
+		const a = await uploadInto(target._id, user._id, "a.txt", "aaa");
+		const b = await uploadInto(child._id, user._id, "b.txt", "bb");
+		track(a.objectKey);
+		track(b.objectKey);
+
+		await deleteDirectory(target._id, user._id);
+
+		expect(await getObjectMetadata(a.objectKey)).toBeNull();
+		expect(await getObjectMetadata(b.objectKey)).toBeNull();
+		expect(await File.countDocuments({ userId: user._id })).toBe(0);
+	});
+
+	it("still removes the other objects when one stored key is malformed", async () => {
+		const user = await createTestUser();
+		const root = await createTestDirectory(user._id);
+		const target = await createTestDirectory(user._id, {
+			parentDirId: root._id,
+		});
+
+		const good = await uploadInto(target._id, user._id, "good.txt", "ok");
+		const bad = await uploadInto(target._id, user._id, "bad.txt", "no");
+		track(good.objectKey);
+		track(bad.objectKey);
+
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+		// Written through the driver to bypass schema validation: `assertKey`
+		// throws synchronously inside the loop and the run must survive it.
+		const leakyNonce = "a".repeat(32);
+		await File.collection.updateOne(
+			{ _id: bad._id },
+			{ $set: { objectKey: `files/not-an-objectid-${leakyNonce}.txt` } },
+		);
+
+		await expect(deleteDirectory(target._id, user._id)).resolves.toBeTruthy();
+
+		expect(await getObjectMetadata(good.objectKey)).toBeNull();
+
+		const logged = warn.mock.calls.flat().join(" ");
+		expect(logged).toContain(String(bad._id));
+		// The nonce in a key is an access control; it must not reach the logs.
+		expect(logged).not.toContain(leakyNonce);
+	});
+});
+
+describe("deleteDirectory guards live reservations", () => {
+	it("refuses while a reservation anywhere in the subtree is live", async () => {
+		const user = await createTestUser();
+		const root = await createTestDirectory(user._id);
+		const target = await createTestDirectory(user._id, {
+			parentDirId: root._id,
+		});
+		const child = await createTestDirectory(user._id, {
+			parentDirId: target._id,
+		});
+
+		const mint = await initiateUpload(
+			child._id,
+			user._id,
+			"pending.txt",
+			500,
+			10 ** 6,
+		);
+
+		// Invariant 1: the refund subtracts the whole subtree size, reservations
+		// included, so allowing this would refund bytes whose URL is still live.
+		await expect(deleteDirectory(target._id, user._id)).rejects.toMatchObject({
+			code: "UPLOAD_IN_PROGRESS",
+			statusCode: 409,
+		});
+
+		expect(await File.findById(mint.fileId)).not.toBeNull();
+		expect(await statsOf(root._id)).toEqual({ size: 500, fileCount: 1 });
+	});
+
+	it("deletes the subtree once the upload window has closed", async () => {
+		const user = await createTestUser();
+		const root = await createTestDirectory(user._id);
+		const target = await createTestDirectory(user._id, {
+			parentDirId: root._id,
+		});
+
+		const mint = await initiateUpload(
+			target._id,
+			user._id,
+			"stale.txt",
+			500,
+			10 ** 6,
+		);
+		await File.updateOne(
+			{ _id: mint.fileId },
+			{ uploadExpiresAt: new Date(Date.now() - 1000) },
+		);
+
+		// Past the deadline the presigned URL is dead, so nothing can land in
+		// the subtree afterwards. Refusing here would wedge the folder forever:
+		// there is no reaper, so the upload never resolves on its own.
+		await expect(deleteDirectory(target._id, user._id)).resolves.toBeTruthy();
+
+		expect(await File.findById(mint.fileId)).toBeNull();
+		expect(await statsOf(root._id)).toEqual({ size: 0, fileCount: 0 });
+	});
+
+	it("refuses a mixed subtree without touching the ready file's object", async () => {
+		const user = await createTestUser();
+		const root = await createTestDirectory(user._id);
+		const target = await createTestDirectory(user._id, {
+			parentDirId: root._id,
+		});
+
+		const ready = await uploadInto(target._id, user._id, "ready.txt", "abcde");
+		track(ready.objectKey);
+		await initiateUpload(target._id, user._id, "pending.txt", 500, 10 ** 6);
+
+		await expect(deleteDirectory(target._id, user._id)).rejects.toMatchObject({
+			code: "UPLOAD_IN_PROGRESS",
+			statusCode: 409,
+		});
+
+		expect(await getObjectMetadata(ready.objectKey)).not.toBeNull();
+		expect(await File.countDocuments({ userId: user._id })).toBe(2);
+	});
+
+	it("succeeds once the pending upload has been cleaned up", async () => {
+		const user = await createTestUser();
+		const root = await createTestDirectory(user._id);
+		const target = await createTestDirectory(user._id, {
+			parentDirId: root._id,
+		});
+
+		const mint = await initiateUpload(
+			target._id,
+			user._id,
+			"pending.txt",
+			500,
+			10 ** 6,
+		);
+		// No cleanup job on this branch, so stand in for it: drop the expired
+		// pending document and refund its bytes. Real cleanup lands in #86.
+		await File.deleteOne({ _id: mint.fileId });
+		await updateAncestorDirectoryStats(target._id, { bytes: -500, files: -1 });
+
+		await expect(deleteDirectory(target._id, user._id)).resolves.toBeTruthy();
+		expect(await statsOf(root._id)).toEqual({ size: 0, fileCount: 0 });
+	});
+
+	it("never refunds a live reservation whose bytes still land (quota bypass)", async () => {
+		const user = await createTestUser();
+		const root = await createTestDirectory(user._id);
+		const target = await createTestDirectory(user._id, {
+			parentDirId: root._id,
+		});
+		const body = "unaccounted bytes";
+
+		// 1. Mint a reservation. Its presigned URL cannot be revoked.
+		const mint = await initiateUpload(
+			target._id,
+			user._id,
+			"free.bin",
+			body.length,
+			10 ** 6,
+		);
+		const { objectKey } = await File.findById(mint.fileId).select("+objectKey").lean();
+		track(objectKey);
+
+		// 2. Delete the parent folder — the step that used to refund the bytes.
+		await expect(deleteDirectory(target._id, user._id)).rejects.toMatchObject({
+			code: "UPLOAD_IN_PROGRESS",
+			statusCode: 409,
+		});
+
+		// 3. The URL is still live, so the bytes really do land in the bucket.
+		const response = await fetch(mint.uploadUrl, {
+			method: "PUT",
+			headers: {
+				"Content-Type": mint.contentType,
+				"Content-Length": String(body.length),
+			},
+			body,
+		});
+		expect(response.ok).toBe(true);
+		expect((await getObjectMetadata(objectKey)).size).toBe(body.length);
+
+		// 4. And they are still charged: the reservation and the folder holding
+		// it both survived, so nothing was ever refunded.
+		expect(await Directory.findById(target._id)).not.toBeNull();
+		expect((await File.findById(mint.fileId).select("+objectKey").lean()).status).toBe("pending");
+		expect(await statsOf(root._id)).toEqual({
+			size: body.length,
+			fileCount: 1,
+		});
+	});
+});
+
+// Deeper than the 21 levels a `$graphLookup` with `maxDepth: 20` can see, and
+// `createDirectory` has no depth cap, so a user can reach here at will.
+const GRAPH_LOOKUP_BLIND_DEPTH = 23;
+
+// Built through the real service so folderCount stays consistent down the chain.
+const buildDeepChain = async (userId, startDirId, levels) => {
+	let parentDirId = startDirId;
+	const chain = [];
+
+	for (let i = 0; i < levels; i++) {
+		const dir = await createDirectory(
+			parentDirId,
+			`lvl${String(i).padStart(2, "0")}`,
+			userId,
+		);
+		chain.push(dir);
+		parentDirId = dir._id;
+	}
+
+	return chain;
+};
+
+describe("deleteDirectory sees the whole subtree at any depth", () => {
+	it("refuses a reservation deeper than the old maxDepth (quota bypass)", async () => {
+		const user = await createTestUser();
+		const root = await createTestDirectory(user._id);
+		const target = await createTestDirectory(user._id, {
+			parentDirId: root._id,
+		});
+		const chain = await buildDeepChain(
+			user._id,
+			target._id,
+			GRAPH_LOOKUP_BLIND_DEPTH,
+		);
+		const deepest = chain.at(-1);
+
+		const mint = await initiateUpload(
+			deepest._id,
+			user._id,
+			"free.bin",
+			500,
+			10 ** 6,
+		);
+
+		// The refund subtracts the denormalized root totals, which count files at
+		// every depth, so the guard has to see every depth too. Otherwise the
+		// bytes are refunded while the presigned URL can still write them.
+		await expect(deleteDirectory(target._id, user._id)).rejects.toMatchObject({
+			code: "UPLOAD_IN_PROGRESS",
+			statusCode: 409,
+		});
+
+		expect(await File.findById(mint.fileId)).not.toBeNull();
+		expect(await statsOf(root._id)).toEqual({ size: 500, fileCount: 1 });
+	});
+
+	it("deletes a file below the old maxDepth, and its object, when the subtree is clean", async () => {
+		const user = await createTestUser();
+		const root = await createTestDirectory(user._id);
+		const target = await createDirectory(root._id, "target", user._id);
+		const chain = await buildDeepChain(
+			user._id,
+			target._id,
+			GRAPH_LOOKUP_BLIND_DEPTH,
+		);
+		const deepest = chain.at(-1);
+
+		const file = await uploadInto(deepest._id, user._id, "deep.txt", "12345");
+		track(file.objectKey);
+
+		expect(await statsOf(root._id)).toEqual({ size: 5, fileCount: 1 });
+
+		await deleteDirectory(target._id, user._id);
+
+		expect(await getObjectMetadata(file.objectKey)).toBeNull();
+		expect(await File.countDocuments({ userId: user._id })).toBe(0);
+		expect(await Directory.countDocuments({ userId: user._id })).toBe(1);
+		expect(await statsOf(root._id)).toEqual({ size: 0, fileCount: 0 });
+		expect(await folderCountOf(root._id)).toBe(0);
+	});
+});
+
+describe("getDirectory hides pending uploads", () => {
+	it("omits a pending upload and never leaks its lifecycle fields", async () => {
+		const user = await createTestUser();
+		const dir = await createTestDirectory(user._id);
+
+		await uploadInto(dir._id, user._id, "real.txt", "x");
+		await initiateUpload(dir._id, user._id, "pending.txt", 500, 10 ** 6);
+
+		const result = await getDirectory(dir._id, user._id);
+
+		expect(result.files).toHaveLength(1);
+		expect(result.files[0].name).toBe("real.txt");
+
+		// Internal upload bookkeeping must never reach a response.
+		expect(result.files[0]).not.toHaveProperty("status");
+		expect(result.files[0]).not.toHaveProperty("uploadExpiresAt");
+		expect(result.files[0]).not.toHaveProperty("objectKey");
+
+		// fileCount is the denormalized quota number and a pending upload really
+		// does hold bytes, so it deliberately still counts both.
+		expect(result.fileCount).toBe(2);
+		expect(result.totalSize).toBe(501);
+	});
+
+	it("returns an empty file list when every upload is still pending (boundary)", async () => {
+		const user = await createTestUser();
+		const dir = await createTestDirectory(user._id);
+
+		await initiateUpload(dir._id, user._id, "one.txt", 100, 10 ** 6);
+		await initiateUpload(dir._id, user._id, "two.txt", 200, 10 ** 6);
+
+		const result = await getDirectory(dir._id, user._id);
+
+		expect(result.files).toEqual([]);
+		expect(result.fileCount).toBe(2);
+	});
+
+	it("shows the file once the upload is confirmed", async () => {
+		const user = await createTestUser();
+		const dir = await createTestDirectory(user._id);
+		const body = Buffer.from("hello");
+
+		const mint = await initiateUpload(
+			dir._id,
+			user._id,
+			"later.txt",
+			body.length,
+			10 ** 6,
+		);
+		expect((await getDirectory(dir._id, user._id)).files).toEqual([]);
+
+		await fetch(mint.uploadUrl, {
+			method: "PUT",
+			body,
+			headers: {
+				"content-type": mint.contentType,
+				"content-length": String(body.length),
+			},
+		});
+		await confirmUpload(mint.fileId, user._id);
+
+		const result = await getDirectory(dir._id, user._id);
+		expect(result.files).toHaveLength(1);
+		expect(result.files[0].name).toBe("later.txt");
+		expect(result.files[0]).not.toHaveProperty("status");
 	});
 });

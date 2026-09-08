@@ -1,3 +1,5 @@
+import { randomBytes } from "node:crypto";
+
 import mongoose from "mongoose";
 
 import User from "../src/models/user.model.js";
@@ -6,6 +8,7 @@ import File from "../src/models/file.model.js";
 import Directory from "../src/models/directory.model.js";
 
 import { ROLES } from "../src/constants/roles.js";
+import { mimeFromExtension } from "../src/utils/mimeType.js";
 
 let counter = 0;
 const nextId = () => ++counter;
@@ -82,11 +85,24 @@ export const createTestDirectory = async (userId, overrides = {}) => {
 	});
 };
 
-export const createTestFile = async (userId, parentDirId, overrides = {}) =>
-	File.create({
+export const createTestFile = async (userId, parentDirId, overrides = {}) => {
+	const id = new mongoose.Types.ObjectId();
+	const extension = (overrides.extension ?? ".txt").toLowerCase();
+
+	return File.create({
+		_id: overrides._id ?? id,
 		name: overrides.name ?? `file-${nextId()}.txt`,
-		extension: overrides.extension ?? ".txt",
+		extension,
+		// Derived from the extension so the stored type matches what a real mint
+		// would have pinned into the PUT signature.
+		contentType: overrides.contentType ?? mimeFromExtension(extension),
 		size: overrides.size ?? 100,
 		parentDirId,
 		userId,
+		status: overrides.status ?? "ready",
+		// Required and unique; the nonce is what makes a key unguessable from the id.
+		objectKey:
+			overrides.objectKey ??
+			`files/${overrides._id ?? id}-${randomBytes(16).toString("hex")}${extension}`,
 	});
+};
