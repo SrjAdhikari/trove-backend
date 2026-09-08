@@ -7,6 +7,7 @@ import File from "../../../src/models/file.model.js";
 import Directory from "../../../src/models/directory.model.js";
 
 import {
+	getUserById,
 	changeUserRole,
 	suspendUser,
 	unsuspendUser,
@@ -455,5 +456,38 @@ describe("admin/user.service — restoreUser", () => {
 		await restoreUser(caller, target._id);
 
 		expect(await Session.countDocuments({ userId: target._id })).toBe(0);
+	});
+});
+
+describe("getUserById excludes pending uploads from the stats", () => {
+	it("counts only ready files in storageBytes and fileCount", async () => {
+		const user = await createTestUser();
+		const dir = await createTestDirectory(user._id);
+
+		await uploadFileFromServer(
+			dir._id,
+			user._id,
+			"real.txt",
+			Readable.from(Buffer.from("12345")),
+			10 ** 9,
+		);
+		await initiateUpload(dir._id, user._id, "pending.txt", 9999, 10 ** 9);
+
+		const result = await getUserById(user._id.toString());
+
+		expect(result.stats.storageBytes).toBe(5);
+		expect(result.stats.fileCount).toBe(1);
+	});
+
+	it("reports zero storage when the user has only pending uploads (boundary)", async () => {
+		const user = await createTestUser();
+		const dir = await createTestDirectory(user._id);
+
+		await initiateUpload(dir._id, user._id, "pending.txt", 4096, 10 ** 9);
+
+		const result = await getUserById(user._id.toString());
+
+		expect(result.stats.storageBytes).toBe(0);
+		expect(result.stats.fileCount).toBe(0);
 	});
 });

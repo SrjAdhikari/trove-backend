@@ -12,6 +12,7 @@ import {
 import {
 	uploadFileFromServer,
 	initiateUpload,
+	confirmUpload,
 } from "../../src/services/file.service.js";
 import { deleteObject, getObjectMetadata } from "../../src/lib/r2.js";
 import Directory from "../../src/models/directory.model.js";
@@ -945,5 +946,73 @@ describe("deleteDirectory sees the whole subtree at any depth", () => {
 		expect(await Directory.countDocuments({ userId: user._id })).toBe(1);
 		expect(await statsOf(root._id)).toEqual({ size: 0, fileCount: 0 });
 		expect(await folderCountOf(root._id)).toBe(0);
+	});
+});
+
+describe("getDirectory hides pending uploads", () => {
+	it("omits a pending upload and never leaks its lifecycle fields", async () => {
+		const user = await createTestUser();
+		const dir = await createTestDirectory(user._id);
+
+		await uploadInto(dir._id, user._id, "real.txt", "x");
+		await initiateUpload(dir._id, user._id, "pending.txt", 500, 10 ** 6);
+
+		const result = await getDirectory(dir._id, user._id);
+
+		expect(result.files).toHaveLength(1);
+		expect(result.files[0].name).toBe("real.txt");
+
+		// Internal upload bookkeeping must never reach a response.
+		expect(result.files[0]).not.toHaveProperty("status");
+		expect(result.files[0]).not.toHaveProperty("uploadExpiresAt");
+		expect(result.files[0]).not.toHaveProperty("objectKey");
+
+		// fileCount is the denormalized quota number and a pending upload really
+		// does hold bytes, so it deliberately still counts both.
+		expect(result.fileCount).toBe(2);
+		expect(result.totalSize).toBe(501);
+	});
+
+	it("returns an empty file list when every upload is still pending (boundary)", async () => {
+		const user = await createTestUser();
+		const dir = await createTestDirectory(user._id);
+
+		await initiateUpload(dir._id, user._id, "one.txt", 100, 10 ** 6);
+		await initiateUpload(dir._id, user._id, "two.txt", 200, 10 ** 6);
+
+		const result = await getDirectory(dir._id, user._id);
+
+		expect(result.files).toEqual([]);
+		expect(result.fileCount).toBe(2);
+	});
+
+	it("shows the file once the upload is confirmed", async () => {
+		const user = await createTestUser();
+		const dir = await createTestDirectory(user._id);
+		const body = Buffer.from("hello");
+
+		const mint = await initiateUpload(
+			dir._id,
+			user._id,
+			"later.txt",
+			body.length,
+			10 ** 6,
+		);
+		expect((await getDirectory(dir._id, user._id)).files).toEqual([]);
+
+		await fetch(mint.uploadUrl, {
+			method: "PUT",
+			body,
+			headers: {
+				"content-type": mint.contentType,
+				"content-length": String(body.length),
+			},
+		});
+		await confirmUpload(mint.fileId, user._id);
+
+		const result = await getDirectory(dir._id, user._id);
+		expect(result.files).toHaveLength(1);
+		expect(result.files[0].name).toBe("later.txt");
+		expect(result.files[0]).not.toHaveProperty("status");
 	});
 });

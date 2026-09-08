@@ -41,8 +41,11 @@ const getDirectory = async (directoryId, userId) => {
 		throw new AppError("Directory not found", NOT_FOUND, DIRECTORY_NOT_FOUND);
 	}
 
+	// Fetch the immediate files, child directories, and ancestor names in parallel
 	const [files, childDirs, ancestors] = await Promise.all([
-		File.find({ parentDirId: directory._id, userId }).lean(),
+		File.find({ parentDirId: directory._id, userId, status: "ready" })
+			.select("-status -uploadExpiresAt")
+			.lean(),
 		Directory.find({ parentDirId: directory._id, userId }).lean(),
 		resolveDirectoryNames(directory.ancestorIds, userId),
 	]);

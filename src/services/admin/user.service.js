@@ -197,7 +197,7 @@ const getUserById = async (id) => {
 	const [storageAgg, directoryCount, activeSessionCount, lastSession] =
 		await Promise.all([
 			File.aggregate([
-				{ $match: { userId: userObjectId } },
+				{ $match: { userId: userObjectId, status: "ready" } },
 				{
 					$group: {
 						_id: null,
