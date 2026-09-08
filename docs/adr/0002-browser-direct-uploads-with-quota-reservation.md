@@ -16,7 +16,7 @@ The Manakuru project already runs presigned PUT against R2 in production, which 
 
 The browser uploads directly to R2 via presigned PUT, in a **mint → PUT → confirm** flow, and reads objects through short-lived signed GET URLs returned as JSON. The server handles upload bytes only for Drive import, where they originate server-side. Development runs against a dedicated R2 bucket; there is no local-disk driver.
 
-Object keys are generated server-side with a 128-bit random nonce and **stored** on the document — `File.storageKey`, `User.profilePictureKey` — never derived from an id at read time.
+Object keys are generated server-side with a 128-bit random nonce and **stored** on the document — `File.objectKey`, `User.profilePictureKey` — never derived from an id at read time.
 
 ## Alternatives Considered
 

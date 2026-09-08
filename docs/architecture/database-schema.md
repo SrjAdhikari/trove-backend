@@ -41,7 +41,7 @@ Source: `src/models/user.model.js`. Atlas mirror: `src/schemas/user.schema.js`.
 | `email`                 | String   | yes                       | —         | `trim`, `lowercase`, unique index, regex-validated            |
 | `password`              | String   | only if `provider=email`  | —         | `minlength: 8`, `select: false`, bcrypt-hashed pre-save       |
 | `rootDirId`             | ObjectId | no                        | —         | Set during `verifyOTP` (email path) or OAuth new-user branch  |
-| `storageLimit`          | Number   | yes                       | `1 GB`    | Per-user storage quota in bytes (`1 * 1000 * 1000 * 1000`). **Not** in the Atlas validator's `required` array — the Mongoose default guarantees presence on every ORM write, so requiring it is redundant. Enforced on upload; see `../file/file-upload.md` |
+| `storageLimit`          | Number   | yes                       | env       | Per-user storage quota in bytes, defaulting to the environment-configured `DEFAULT_STORAGE_LIMIT`. **Not** in the Atlas validator's `required` array — the Mongoose default guarantees presence on every ORM write, so requiring it is redundant. Enforced on upload; see `../file/file-upload.md` |
 | `profilePicture`        | String   | no                        | `null`    | Populated from OAuth profile; nullable in both Mongoose+Atlas |
 | `provider`              | String   | yes                       | `"email"` | Enum `["email", "google", "github"]`. Immutable via pre-save  |
 | `otp`                   | String   | no                        | —         | `select: false`, hashed                                       |
@@ -126,14 +126,20 @@ Source: `src/models/file.model.js`. Atlas mirror: `src/schemas/files.schema.js`.
 | ----------------------- | -------- | -------- | ------- | ----------------------------------------------- |
 | `name`                  | String   | yes      | —       | `trim`, `minlength: 3`. No max enforced yet     |
 | `extension`             | String   | yes      | —       | `trim`, `lowercase`. Stored separately          |
-| `size`                  | Number   | yes      | —       | Bytes. `min: 0`. Set by the byte counter inside `uploadFile`. Source for `file.size` in API responses; each upload/delete also folds this into the denormalized `Directory.size`/`fileCount` totals. |
+| `contentType`           | String   | yes      | —       | `trim`. Derived from the extension when the upload is initiated and **stored**, so a later change to the extension-to-MIME map cannot make an in-flight confirm fail or a served type disagree with the stored object. |
+| `size`                  | Number   | yes      | —       | Bytes. `min: 0`. On the browser path this is the size the client declares and the server signs into the upload URL; on the server-side path it is produced by the byte counter. Source for `file.size` in API responses; each upload/delete also folds this into the denormalized `Directory.size`/`fileCount` totals. |
 | `parentDirId`           | ObjectId | yes      | —       | The containing directory                        |
 | `userId`                | ObjectId | yes      | —       | Owning user (denormalized for cheap auth)       |
+| `status`                | String   | yes      | `ready` | `pending` \| `ready`. A `pending` row is an upload that has been authorised but not yet verified. Every read path filters on `ready`. |
+| `uploadExpiresAt`       | Date     | no       | —       | When a `pending` upload's reservation lapses. Unset when the upload is confirmed. Always later than the presigned URL's own expiry, so a slow but legitimate transfer is not reclaimed mid-flight. |
+| `objectKey`             | String   | yes      | —       | `unique`, `select: false`. The R2 object key, shaped `files/<fileId>-<32 hex nonce><extension>`. Written once at initiation and read thereafter — never rebuilt. |
 | `createdAt`/`updatedAt` | Date     | —        | —       | Via `timestamps: true`                          |
 
 **Indexes**
 
 - Compound `{ parentDirId: 1, userId: 1 }` — mirrors the Directory index; lets "list files in dir X owned by user Y" hit a single index.
+- Unique `{ objectKey: 1 }` — one document per stored object, enforced by the database rather than by convention.
+- Compound `{ status: 1, uploadExpiresAt: 1 }` — finds pending uploads whose reservation has lapsed without scanning the collection.
 
 **Name vs extension**
 
@@ -148,15 +154,19 @@ Sensitive fields are hardcoded with `select: false` at the schema level. The def
 | Model | Hidden fields                                           |
 | ----- | ------------------------------------------------------- |
 | User  | `password`, `otp`, `otpExpiresAt`, `verificationExpiresAt` |
+| File  | `objectKey`                                             |
 
 Queries don't return these unless explicitly re-selected via `.select("+fieldName")`. That override lives **in the service layer only** — never controllers, never middleware. Current call sites:
 
 - `loginUser` — `.select("+password")` to run bcrypt-compare.
 - `changePassword` — `.select("+password")` to verify the current password before rotating it. See `docs/authentication/change-password.md`.
 - `verifyOTP` / `resendOTP` — `.select("+otp +otpExpiresAt +verificationExpiresAt")` to validate against the stored registration OTP hash.
+- `deleteFile` / `confirmUpload` / `createDownloadUrl` (`src/services/file.service.js`) and `deleteDirectory` (`src/services/directory.service.js`) — `.select("+objectKey")` to delete, verify, or presign against the stored object. The delete and confirm paths destructure the key off the document before returning, so it never reaches a response. `hardDeleteUser` uses the equivalent inclusive projection form, `File.find(query, "_id objectKey")`.
 - `forgotPassword` / `resetPassword` — `.select("+otpExpiresAt")` (forgot, for the cooldown check) and `.select("+otp +otpExpiresAt")` (reset, for hash verification). Reuses the same `otp` / `otpExpiresAt` fields as registration; valid because verified users have those fields cleared by `verifyOTP`'s transaction. See `docs/authentication/password-reset.md` for why.
 
-This is the project's **Security by Default** rule — adding a new sensitive field means adding `select: false` at the schema level, not relying on service-layer discipline.
+This is the project's **Security by Default** rule — adding a new sensitive field means adding `select: false` at the schema level, not relying on service-layer discipline. `File.objectKey` is hidden for exactly this reason: the random nonce inside it is what makes another user's object key unguessable, so a read that forgets to strip it would leak an access control rather than a cosmetic detail.
+
+> `select: false` is a Mongoose projection default. It does not change the stored document or the Atlas `$jsonSchema` validator, so adding it to an existing field needs no database-side change.
 
 ---
 

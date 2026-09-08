@@ -100,12 +100,18 @@ The Directory retrieval logic adheres to the Controller-Service pattern, with au
 
 The counters are **maintained on write, inside the same transaction as the file/directory change**, by `updateAncestorDirectoryStats(startDirId, { bytes, files, folders }, session)` in `directory.service.js`, which walks the `parentDirId` chain from the changed directory up to the root and `$inc`s `size`/`fileCount`/`folderCount` on every ancestor:
 
-- `uploadFile` → `+bytes, +1 file` on the parent chain.
+- `initiateUpload` / `uploadFileFromServer` → `+bytes, +1 file` on the parent chain.
 - `deleteFile` → `-bytes, -1 file`.
 - `createDirectory` → `+1 folder` on the parent chain (the new folder's own count starts at 0).
 - `deleteDirectory` → subtracts the deleted subtree's stored totals, including its folder count, from the ancestor chain.
 
 This inverts the earlier trade-off: writes now do a bounded walk up the tree, but reads are O(1) field lookups regardless of subtree size. See `../architecture/transaction-patterns.md` for the transactional shape and retry-safety, and `../architecture/database-schema.md` for the Atlas `minimum: 0` underflow guard (the Mongoose model deliberately has no `min`, since `$inc` skips validators).
+
+### In-flight uploads are counted but not listed
+
+The `files` array lists only files with `status: "ready"`, and the internal `status` and `uploadExpiresAt` fields are projected out of every entry. An upload that has been initiated but not yet confirmed is therefore absent from `files` while still counted in `fileCount` and `size` — deliberately, because its bytes are genuinely reserved against the user's quota from the moment the upload is authorised.
+
+The consequence is that `files.length` can be smaller than `fileCount` while a transfer is in progress. That is correct, not a drift bug: the counters describe what the user is consuming, and the array describes what they can actually open.
 
 ## 🧭 Breadcrumb & Path (stored `ancestorIds` + `resolveDirectoryNames`)
 

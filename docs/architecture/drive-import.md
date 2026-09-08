@@ -67,7 +67,7 @@ For each picked item:
 2. **Early reject**: trashed items, files over the per-file size cap, or items whose recursion depth would exceed the cap.
 3. **Folder** (`application/vnd.google-apps.folder`) → create a TroveCloud `Directory`, paginate children via `files.list`, recurse depth-first.
 4. **Google-native** → look up the export MIME in `GOOGLE_APPS_EXPORT_MAP`. If not mapped (Forms, Drawings, Shortcuts, etc.), push to `failed` with `UNSUPPORTED_DRIVE_TYPE`.
-5. **Regular file** → call the Drive download endpoint, wrap `response.body` as a Node Readable (`Readable.fromWeb`), and pass to the existing `uploadFile` service.
+5. **Regular file** → call the Drive download endpoint, wrap `response.body` as a Node Readable (`Readable.fromWeb`), and pass to the existing `uploadFileFromServer` service.
 6. **Track cumulative bytes.** Once aggregate exceeds the per-request cap, short-circuit remaining items with `DRIVE_IMPORT_LIMIT_EXCEEDED`.
 
 Per-item processing runs inside a `try / catch`: any failure pushes the item to `failed` with a reason code and moves on. Partial success is the user-facing contract.
@@ -124,7 +124,7 @@ Internal helpers:
 - `sanitizeDirName(name)` — trims, strips control chars, pads names shorter than 3 chars with `_` suffix, truncates over 50, falls back to `"Imported folder"` if empty. Needed because `Directory.name` has `minlength: 3, maxlength: 50` but Drive folder names aren't bounded.
 - `sanitizeFileName(name)` — same treatment against `File.name` constraints (no minlength today; still strip control chars and cap at 255, matching the existing `file.controller.js` sanitization).
 
-**Streaming to disk:** Drive's response body arrives as a Web ReadableStream. It is wrapped in a `Transform` that counts bytes and aborts the pipeline when the post-hoc total exceeds the per-file cap — necessary because Google-native `export` responses have no pre-flight `size`. The counter-wrapped Readable is then passed to the existing `uploadFile(parentDirId, userId, displayName, readable)` in `src/services/file.service.js`, which already handles the DB row creation, disk write, and rollback on pipeline failure.
+**Streaming through the server:** Drive's response body arrives as a Web ReadableStream. It is wrapped in a `Transform` that counts bytes and aborts the pipeline when the post-hoc total exceeds the per-file cap — necessary because Google-native `export` responses have no pre-flight `size`. The counter-wrapped Readable is then passed to the existing `uploadFileFromServer(parentDirId, userId, displayName, readable, totalStorageLimit)` in `src/services/file.service.js`, which already handles the DB row creation, the write to R2, and rollback on pipeline failure.
 
 **`src/validators/drive.validator.js`** — request-body validation.
 
@@ -164,13 +164,13 @@ driveRouter.post("/import", validateBody(importDriveSchema), importDriveHandler)
 
 ## 📐 Caps and Guards
 
-Conservative defaults. Tune later if real usage warrants.
+Conservative defaults. The two byte caps are read from the environment through `getNumberEnv` in `src/constants/env.js` (`MAX_FILE_UPLOAD_SIZE` and `MAX_DRIVE_IMPORT_SIZE`), so the values below are the current settings rather than constants in code.
 
 | Guard                       | Value        | Enforced in                                                                                                              |
 | --------------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------ |
 | Max items per request       | 50           | `importDriveSchema` (`validateBody`) — `400 VALIDATION_ERROR` on violation                                               |
-| Per-file size cap           | 100 MB       | `importItem` pre-flight (via `size` from metadata) AND post-hoc byte counter (for native exports where `size` is absent) |
-| Aggregate bytes per request | 500 MB       | Running total in `ctx.totalBytes`; short-circuits remaining items with `DRIVE_IMPORT_LIMIT_EXCEEDED`                     |
+| Per-file size cap           | env (100 MB) | `importItem` pre-flight (via `size` from metadata) AND post-hoc byte counter (for native exports where `size` is absent) |
+| Aggregate bytes per request | env (200 MB) | Running total in `ctx.totalBytes`; short-circuits remaining items with `DRIVE_IMPORT_LIMIT_EXCEEDED`                     |
 | Folder recursion depth      | 20           | Parameter passed through `importItem`; matches `$graphLookup` `maxDepth` elsewhere in the codebase                       |
 | `accessToken` string length | ≤ 4096       | `importDriveSchema` (`validateBody`, defensive)                                                                          |
 | Drive fetch timeout         | 15s per call | `AbortSignal.timeout` in `googleDrive.js`                                                                                |
@@ -184,7 +184,7 @@ Existing code leveraged by the implementation — no duplication.
 
 | What's needed                                                                        | Existing function                                       | Location                              |
 | ------------------------------------------------------------------------------------ | ------------------------------------------------------- | ------------------------------------- |
-| Stream bytes to disk with rollback                                                   | `uploadFile(parentDirId, userId, fileName, fileStream)` | `src/services/file.service.js`        |
+| Stream bytes to object storage with rollback                                         | `uploadFileFromServer(parentDirId, userId, fileName, fileStream, totalStorageLimit)` | `src/services/file.service.js`        |
 | Create a directory with parent-ownership check                                       | `createDirectory(parentDirId, dirname, userId)`         | `src/services/directory.service.js`   |
 | Session-based auth, attach `req.user`                                                | `authenticate` middleware                               | `src/middlewares/auth.middleware.js`  |
 | Raw-fetch third-party API pattern (timeout, UA, `response.ok`, AppError passthrough) | `verifyGithubCodeAndFetchProfile`                       | `src/lib/githubAuth.js`               |
@@ -211,11 +211,11 @@ Existing code leveraged by the implementation — no duplication.
 These are deliberately out of scope for the initial implementation. Each represents a future follow-up, not an oversight.
 
 - **Persistent Drive linking / re-import.** No `refresh_token` storage. Would require a dedicated "Link Drive" flow and User-schema changes.
-- **Progress streaming (SSE / WebSocket).** Synchronous response for MVP. Watch for it if p95 exceeds ~10s with real data (a 500 MB import at Drive's ~20 MB/s is ~25s). Confirm any reverse-proxy idle timeout is > 60s before shipping.
+- **Progress streaming (SSE / WebSocket).** Synchronous response for MVP. Watch for it if p95 exceeds ~10s with real data (a 200 MB import at Drive's ~20 MB/s is ~10s). Confirm any reverse-proxy idle timeout is > 60s before shipping.
 - **Per-user total-storage cap.** Doesn't exist anywhere in the app yet. Drive import multiplies that risk — call it out in the PR description when this lands.
 - **Rate-limit retry / backoff.** Drive allows 1000 queries / 100s / user. No exponential backoff for MVP — `403 userRateLimitExceeded` bubbles up as `DRIVE_IMPORT_FAILED`. Add retry if real quota pressure appears.
 - **Shared-drive semantics.** `fields=parents` may be empty for shared-drive items — don't rely on it. Otherwise the feature works transparently since `drive.file` scope covers picked items regardless of ownership.
-- **Client-disconnect cleanup.** If the client disconnects mid-import, the in-flight `uploadFile` rolls back its own partial file, but directories already created stay. Acceptable given per-item semantics.
+- **Client-disconnect cleanup.** If the client disconnects mid-import, the in-flight `uploadFileFromServer` rolls back its own partial write, but directories already created stay. Acceptable given per-item semantics.
 
 ---
 
@@ -250,7 +250,7 @@ These are deliberately out of scope for the initial implementation. Each represe
 - Dedup: pick folder `A` AND `A/file.pdf` explicitly — `file.pdf` appears once.
 - Items length 0 or > 50 — `400 VALIDATION_ERROR`.
 - No session cookie — `401` from `authenticate`.
-- Aggregate limit: pick files summing > 500 MB — early items import, later items fail with `DRIVE_IMPORT_LIMIT_EXCEEDED`.
+- Aggregate limit: pick files summing past `MAX_DRIVE_IMPORT_SIZE` — early items import, later items fail with `DRIVE_IMPORT_LIMIT_EXCEEDED`.
 
 ### Security audit items
 
@@ -262,7 +262,7 @@ These are deliberately out of scope for the initial implementation. Each represe
 
 ## 📎 Critical Files Referenced
 
-- `src/services/file.service.js` — `uploadFile` reused.
+- `src/services/file.service.js` — `uploadFileFromServer` reused.
 - `src/services/directory.service.js` — `createDirectory` reused.
 - `src/lib/githubAuth.js` — structural template for `googleDrive.js`.
 - `src/middlewares/auth.middleware.js` — `authenticate` reused.
