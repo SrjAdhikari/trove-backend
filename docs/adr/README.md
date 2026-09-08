@@ -1,6 +1,6 @@
 # Architecture Decision Records
 
-Each ADR records one architectural decision: the forces that prompted it, the option chosen, the alternatives rejected, and the trade-offs accepted. They capture the **why**; `.claude/STACK.md` captures the current **what**.
+Each ADR records one architectural decision: the forces that prompted it, the option chosen, the alternatives rejected, and the trade-offs accepted. They capture the **why**; the architecture docs under `../architecture/` capture the current **what**.
 
 Add a new one by copying [`template.md`](./template.md) and taking the next number.
 

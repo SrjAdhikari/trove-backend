@@ -19,12 +19,12 @@ The frontend continues to read a single field — `profilePicture` — and rende
 - `GET /api/users/profile-picture/:id` — **public, unauthenticated** route that streams picture bytes by capability token.
 - Disable the OAuth login re-sync of `name` + `profilePicture` (commented out, retained for future use).
 - New required env var `API_URL` (the API's own public origin) for building absolute picture URLs.
-- Magic-byte image validation (JPEG / PNG / WEBP only), 2 MB size cap, old-file cleanup on replace.
+- Magic-byte image validation (JPEG / PNG / WEBP only), an environment-configured size cap, old-file cleanup on replace.
 
 **Explicitly out of scope (deferred):**
 - **`DELETE /api/users/profile-picture` (clear photo back to `null`).** Follow-up PR. Replacement already cleans up the old file, so deferring this does not leak disk — it only postpones the "remove my photo entirely" action.
 - **Image resizing / normalization (e.g. `sharp`).** Stored as-uploaded. Add later only if thumbnail variants are needed.
-- Docs sync (`docs/api/error-codes.md`, `tasks/frontend-api-reference.md`) — ships in the post-feature docs PR, consistent with the already-parked profile docs.
+- Docs sync (`docs/api/error-codes.md` and the frontend API handoff reference) — ships in the post-feature docs PR, consistent with the already-parked profile docs.
 
 > The earlier "OAuth `name`-clobber" follow-up is no longer separate — disabling the login re-sync (below) handles it directly.
 
@@ -42,7 +42,7 @@ The frontend continues to read a single field — `profilePicture` — and rende
 | Storage layout | `storage/profile-pictures/<token>` — **no extension on disk**; MIME derived by sniffing the file head on read | Keeps the URL an extensionless id and makes cleanup a single exact-path delete. The same `mimeType` sniffer runs on upload (validate) and serve (set `Content-Type`). |
 | Upload transport | Raw image body streamed to disk (`pipeline(req, …)`), same as `file.service.js` | Zero new dependencies; one consistent upload pattern across the codebase. |
 | Type validation | **Magic-byte sniff** of the first bytes, not `Content-Type`/filename. Allow JPEG / PNG / WEBP. Reject SVG and GIF | The bytes must genuinely be a supported raster image. SVG is XML and can carry executable script — explicitly excluded. |
-| Size cap | 2 MB, enforced mid-stream via the existing `createByteCounter` | Plenty for a picture; bounds disk/bandwidth. Raw stream bypasses the 1 MB `express.json` limit, so the counter is the real guard. |
+| Size cap | `MAX_PROFILE_PICTURE_SIZE` (currently 2 MB), enforced mid-stream via the existing `createByteCounter` | Plenty for a picture; bounds disk/bandwidth. Raw stream bypasses the 1 MB `express.json` limit, so the counter is the real guard. Read from the environment through `getNumberEnv` in `src/constants/env.js`, so clients should surface the error rather than mirror the number. |
 | URL form | **Absolute** — `https://<API_URL>/api/users/profile-picture/<token>`, from a new required `API_URL` env var | Makes `profilePicture` a uniform "render directly" field; FE treats provider and uploaded URLs identically. Required env var fails loud at boot if misconfigured. |
 | Old-file cleanup | On replace, parse the token from the previous `profilePicture` **only when it matches our `/api/users/profile-picture/` prefix** (validated by strict regex), then delete that file. Remote/`null` previous values → nothing to delete | Prevents orphaned files without adding a schema field; preserves the "zero migration" promise. |
 | Caching | `Cache-Control: public, max-age=31536000, immutable` + correct sniffed `Content-Type` + `X-Content-Type-Options: nosniff` | Safe because the URL changes on every re-upload. `nosniff` is safe because we send the real, sniffed type. |
@@ -94,7 +94,7 @@ The only model-layer change is in `oauth.service.js` — the existing-user **log
 
 1. **Stream with validation:** `pipeline(req, typeValidator.stream, counter.stream, createWriteStream(path))`, after `mkdir(profilePicturesDir, { recursive: true })`.
    - `typeValidator` (from `mimeType.js`) sniffs the first 16 bytes: JPEG `FF D8 FF`, PNG `89 50 4E 47 0D 0A 1A 0A`, WEBP `RIFF…WEBP` **plus** a `VP8 `/`VP8L`/`VP8X` codec chunk at offset 12 (a bare `RIFF…WEBP` prefix is rejected). Unsupported → trips with `INVALID_IMAGE_TYPE` (400).
-   - `createByteCounter(2 MB)` trips → `IMAGE_TOO_LARGE` (400).
+   - `createByteCounter(MAX_PROFILE_PICTURE_SIZE)` trips → `IMAGE_TOO_LARGE` (400).
    - `path` = `storage/profile-pictures/<token>`, `token = crypto.randomBytes(16).toString("hex")`.
    - Any trip rolls back the partial file (same pattern as `file.service.js`).
 2. **Persist then clean up** (ordering avoids ever losing the picture): write new file → capture old `profilePicture` → set `profilePicture` to the new absolute URL → best-effort delete the **old local file** if it was one of ours.
@@ -119,7 +119,7 @@ Thin and public:
 - **No SVG/GIF, magic-byte enforced** — defeats `Content-Type`/extension spoofing and SVG-borne script.
 - **Strict token regex** on the serving route and on cleanup parsing — no path traversal into `storage/`.
 - **Capability tokens** (128-bit random) are unguessable and never enumerable by userId.
-- **Size cap mid-stream** — the request is aborted as soon as it exceeds 2 MB, not after buffering.
+- **Size cap mid-stream** — the request is aborted as soon as it exceeds the configured cap, not after buffering.
 
 ---
 

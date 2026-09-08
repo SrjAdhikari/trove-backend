@@ -58,7 +58,7 @@ The File deletion logic adheres to the Controller-Service pattern, with authenti
 
 ### Transactional DB Delete, Then Physical Removal
 
-The DB delete is transactional: `File.deleteOne` and the `updateAncestorDirectoryStats` ancestor decrement run together inside `withTransaction`, so a file row can never disappear while its bytes stay counted in ancestor folder sizes (or vice versa). The physical `rm` happens **after** the transaction commits — the DB is the source of truth, and disk I/O is a non-retryable side effect that must stay outside the transaction (the same rule `uploadFile` and `deleteDirectory` follow).
+The DB delete is transactional: `File.deleteOne` and the `updateAncestorDirectoryStats` ancestor decrement run together inside `withTransaction`, so a file row can never disappear while its bytes stay counted in ancestor folder sizes (or vice versa). The physical `rm` happens **after** the transaction commits — the DB is the source of truth, and disk I/O is a non-retryable side effect that must stay outside the transaction (the same rule the upload paths and `deleteDirectory` follow).
 
 ### `{ force: true }` on `rm()`
 

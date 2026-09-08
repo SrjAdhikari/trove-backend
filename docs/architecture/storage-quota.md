@@ -6,7 +6,7 @@ This document covers the per-user storage quota: where the limit lives, how usag
 
 ## 🏗️ Architecture
 
-- **Quota storage** — the limit is a field on the user (`User.storageLimit`, `src/models/user.model.js`), defaulting to **1 GB** (`DEFAULT_STORAGE_LIMIT = 1 * 1000 * 1000 * 1000`, decimal, matching the per-file cap convention). It is per-user, so an admin can raise it on a single account later.
+- **Quota storage** — the limit is a field on the user (`User.storageLimit`, `src/models/user.model.js`), defaulting to the environment-configured `DEFAULT_STORAGE_LIMIT` (read through `getNumberEnv` in `src/constants/env.js`; currently 700 MB, decimal, matching the per-file cap convention). It is per-user, so an admin can raise it on a single account later.
 - **Usage source** — usage is **not** stored separately. It is read from the denormalized root-directory `size` (the whole-subtree byte total maintained inside the upload/delete transactions — see `./transaction-patterns.md`). This makes "bytes used" an O(1) read of one document.
 - **Controller (`src/controllers/storage.controller.js`)** — `getStorageUsageHandler` extracts `req.user._id` and `req.user.storageLimit` (the limit rides on the session-populated user, so no extra DB read) and delegates to the service.
 - **Service (`src/services/storage.service.js`)** — `getStorageUsage(userId, totalStorageLimit)` reads the root size, scans the user's files for the category breakdown, and returns the response shape. No HTTP concerns.
@@ -52,7 +52,7 @@ This document covers the per-user storage quota: where the limit lives, how usag
 
 ## 🛡️ Quota Enforcement on Upload
 
-The quota is enforced in `uploadFile` (`src/services/file.service.js`) — see `../file/file-upload.md` for the full upload flow. The non-obvious parts:
+The quota is enforced by the shared `checkQuota` helper in `src/services/file.service.js`, called by both upload paths — `initiateUpload` (browser uploads, at the moment the bytes are reserved) and `uploadFileFromServer` (Drive import and the storage cutover). See `../file/file-upload.md` for the full upload flow. The non-obvious parts:
 
 - **Checked inside the upload transaction.** After the bytes are streamed to disk and the final count is known, the transaction reads the current root `size` and rejects with `STORAGE_LIMIT_EXCEEDED` (400) if `usedBytes + uploadedBytes > storageLimit`, before creating the `File` row.
 - **Concurrency-safe without a lock.** The same transaction also `$inc`s the root document (via `updateAncestorDirectoryStats`). Two simultaneous uploads therefore write-conflict on the root doc; `withTransaction` retries the loser, which re-reads the now-updated `size` and re-checks — so the cap holds even under concurrent uploads. (Details in `./transaction-patterns.md`.)
@@ -75,11 +75,11 @@ The quota is enforced in `uploadFile` (`src/services/file.service.js`) — see `
 
 ## 🧹 Database Mechanisms
 
-- **`User.storageLimit`** (`Number`, required, default 1 GB) — see `./database-schema.md`. Mirrored in the Atlas `$jsonSchema` as a typed property but **not** in the validator's `required` array (the Mongoose default guarantees presence on every ORM write; listing it would reject documents created before the field existed).
+- **`User.storageLimit`** (`Number`, required, environment-configured default) — see `./database-schema.md`. Mirrored in the Atlas `$jsonSchema` as a typed property but **not** in the validator's `required` array (the Mongoose default guarantees presence on every ORM write; listing it would reject documents created before the field existed).
 - No new collection or index — usage rides on the existing denormalized `Directory.size`.
 
 ---
 
 ## 🔀 Deferred
 
-Google Drive imports do **not** yet count against the quota — the import path calls `uploadFile` without a limit, so they are not enforced. Tracked as a follow-up (GitHub issue #65).
+Google Drive imports do **not** yet count against the quota — the import path declares an explicit exemption by passing `Number.POSITIVE_INFINITY` as the limit. Tracked as a follow-up (GitHub issue #65).
