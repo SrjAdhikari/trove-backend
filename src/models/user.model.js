@@ -46,6 +46,11 @@ const userSchema = new Schema(
 			type: String,
 			default: null,
 		},
+		profilePictureKey: {
+			type: String,
+			default: null,
+			match: /^profile-pictures\/[a-f0-9]{24}\/[a-f0-9]{32}$/,
+		},
 		provider: {
 			type: String,
 			enum: ["email", "google", "github"],
@@ -96,6 +101,10 @@ const userSchema = new Schema(
 );
 
 userSchema.index({ verificationExpiresAt: 1 }, { expireAfterSeconds: 0 });
+userSchema.index(
+	{ profilePictureKey: 1 },
+	{ partialFilterExpression: { profilePictureKey: { $type: "string" } } },
+);
 
 // Encrypt password before saving to database
 userSchema.pre("save", async function () {
