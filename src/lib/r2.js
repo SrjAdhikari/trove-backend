@@ -14,7 +14,11 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import AppError from "../errors/AppError.js";
 import envConfig from "../constants/env.js";
 import buildContentDisposition from "../utils/contentDisposition.js";
-import { FIVE_MINUTES_SECONDS, ONE_HOUR_SECONDS } from "../utils/date.js";
+import {
+	FIVE_MINUTES_SECONDS,
+	ONE_HOUR_SECONDS,
+	FIFTEEN_MINUTES_MS,
+} from "../utils/date.js";
 
 import httpStatus from "../constants/httpStatus.js";
 import appErrorCode from "../constants/appErrorCode.js";
@@ -51,7 +55,14 @@ const PROFILE_PICTURE_PREFIX = "profile-pictures";
 
 const UPLOAD_URL_TTL_SECONDS = FIVE_MINUTES_SECONDS;
 const DOWNLOAD_URL_TTL_SECONDS = ONE_HOUR_SECONDS;
-const AVATAR_URL_TTL_SECONDS = ONE_HOUR_SECONDS;
+const PROFILE_PICTURE_URL_TTL_SECONDS = ONE_HOUR_SECONDS;
+const SIGNING_WINDOW_MS = FIFTEEN_MINUTES_MS;
+
+const quantizedSigningDate = (ttlSeconds) => {
+	const window = Math.min(SIGNING_WINDOW_MS, (ttlSeconds * 1000) / 4);
+
+	return new Date(Math.floor(Date.now() / window) * window);
+};
 
 const OBJECT_ID_PATTERN = /^[a-f0-9]{24}$/;
 const NONCE_PATTERN = /^[a-f0-9]{32}$/;
@@ -143,8 +154,10 @@ const presignPut = async (key, { contentType, contentLength, ttl } = {}) => {
 const presignGet = async (
 	key,
 	{ fileName, inline = false, contentType, ttl } = {},
-) =>
-	getSignedUrl(
+) => {
+	const expiresIn = ttl ?? DOWNLOAD_URL_TTL_SECONDS;
+
+	return getSignedUrl(
 		r2Client,
 		new GetObjectCommand({
 			Bucket: R2_BUCKET,
@@ -155,8 +168,9 @@ const presignGet = async (
 				fileName,
 			),
 		}),
-		{ expiresIn: ttl ?? DOWNLOAD_URL_TTL_SECONDS },
+		{ expiresIn, signingDate: quantizedSigningDate(expiresIn) },
 	);
+};
 
 // A 403 means a bad bucket or credentials, not an absent object — rethrow it.
 const isNotFound = (error) =>
@@ -268,5 +282,5 @@ export {
 	listObjects,
 	UPLOAD_URL_TTL_SECONDS,
 	DOWNLOAD_URL_TTL_SECONDS,
-	AVATAR_URL_TTL_SECONDS,
+	PROFILE_PICTURE_URL_TTL_SECONDS,
 };

@@ -239,6 +239,7 @@ const getUserById = async (id) => {
  * @param {object} caller - The admin making the request (has _id and role)
  * @param {string} targetId - ID of the user to update
  * @param {"user"|"admin"|"superadmin"} newRole - New role to assign to the user
+ *
  * @returns {Promise<object>} - Object containing the updated user
  */
 const changeUserRole = async (caller, targetId, newRole) => {
@@ -319,6 +320,7 @@ const suspendUser = async (caller, targetId) => {
  *
  * @param {object} caller - User object
  * @param {string} targetId - ID of the user to unsuspend
+ *
  * @returns {Promise<object>} - Object containing the unsuspended user
  */
 const unsuspendUser = async (caller, targetId) => {
@@ -349,6 +351,7 @@ const unsuspendUser = async (caller, targetId) => {
  *
  * @param {object} caller - User object
  * @param {string} targetId - ID of the user to force-logout
+ *
  * @returns {Promise<object>} - Object containing the number of sessions revoked
  */
 const forceLogoutUser = async (caller, targetId) => {
@@ -379,6 +382,7 @@ const forceLogoutUser = async (caller, targetId) => {
  *
  * @param {object} caller - User object
  * @param {string} targetId - ID of the user to soft-delete
+ *
  * @returns {Promise<object>} - Object containing the soft-deleted user
  */
 const softDeleteUser = async (caller, targetId) => {
@@ -411,10 +415,11 @@ const softDeleteUser = async (caller, targetId) => {
 /**
  * Hard delete user
  * Irreversibly wipes the user and all their data from MongoDB
- * then deletes physical files from disk
+ * then deletes their objects from R2
  *
  * @param {object} caller - User object
  * @param {string} targetId - ID of the user to hard-delete
+ *
  * @returns {Promise<object>} - Object containing the number of files and directories deleted
  */
 const hardDeleteUser = async (caller, targetId) => {
@@ -443,11 +448,9 @@ const hardDeleteUser = async (caller, targetId) => {
 				},
 			]).session(mongooseSession);
 
-			const files = await File.find(
-				{ userId: userObjectId },
-				"_id objectKey",
-				{ session: mongooseSession },
-			).lean();
+			const files = await File.find({ userId: userObjectId }, "_id objectKey", {
+				session: mongooseSession,
+			}).lean();
 
 			await Session.deleteMany(
 				{ userId: userObjectId },
@@ -499,6 +502,7 @@ const hardDeleteUser = async (caller, targetId) => {
  *
  * @param {object} caller - User object
  * @param {string} targetId - ID of the user to restore
+ *
  * @returns {Promise<object>} - Object containing the restored user
  */
 const restoreUser = async (caller, targetId) => {

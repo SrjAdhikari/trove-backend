@@ -122,8 +122,9 @@ const handleDriveFetchError = (error, operation) => {
  * Client-supplied mimeType from the Picker is not trusted;
  * callers should re-fetch via this function before branching on type.
  *
- * @param {string} accessToken - Short-lived OAuth token (drive.file scope).
+ * @param {string} accessToken - Short-lived OAuth token (drive.readonly scope).
  * @param {string} fileId - Drive file or folder ID.
+ *
  * @returns {Promise<{id:string, name:string, mimeType:string, size?:string, trashed?:boolean, shortcutDetails?:Object, parents?:string[]}>}
  * @throws {AppError} INVALID_DRIVE_TOKEN / DRIVE_ITEM_NOT_FOUND / DRIVE_IMPORT_FAILED
  */
@@ -189,6 +190,7 @@ const downloadDriveFile = async (accessToken, fileId) => {
  * @param {string} accessToken
  * @param {string} fileId
  * @param {string} exportMimeType - One of the target mimes in GOOGLE_APPS_EXPORT_MAP.
+ *
  * @returns {Promise<Response>}
  * @throws {AppError} DRIVE_EXPORT_TOO_LARGE for >= 10 MB Docs/Slides.
  */
@@ -223,6 +225,7 @@ const exportGoogleDoc = async (accessToken, fileId, exportMimeType) => {
  * @param {string} accessToken
  * @param {string} folderId
  * @param {string} [pageToken]
+ *
  * @returns {Promise<{files: Array<{id:string,name:string,mimeType:string,size?:string}>, nextPageToken?:string}>}
  */
 const listDriveFolderChildren = async (accessToken, folderId, pageToken) => {

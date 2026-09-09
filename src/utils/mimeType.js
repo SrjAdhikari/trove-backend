@@ -1,7 +1,5 @@
 //* src/utils/mimeType.js
 
-import { Transform } from "node:stream";
-
 // Minimum bytes needed to decide every supported type.
 const MIN_HEADER_BYTES = 16;
 
@@ -45,47 +43,6 @@ const detectImageType = (buf) => {
 	}
 
 	return null;
-};
-
-/**
- * Stream transform that validates the leading bytes are a supported image,
- * then passes data through unchanged. Aborts the pipeline on an unsupported
- * type. Mirrors the { stream, state } shape of `createByteCounter`.
- */
-const createImageTypeValidator = () => {
-	const state = { detected: null, rejected: false };
-	let head = Buffer.alloc(0);
-
-	// Runs once, as soon as we have enough bytes (or the stream ends).
-	const validate = (cb) => {
-		state.detected = detectImageType(head);
-		if (!state.detected) {
-			state.rejected = true;
-			return cb(new Error("unsupported image type"));
-		}
-
-		// release the buffered head; later chunks pass straight through
-		cb(null, head);
-	};
-
-	const stream = new Transform({
-		transform(chunk, _enc, cb) {
-			// already validated → pass through
-			if (state.detected) return cb(null, chunk);
-			head = Buffer.concat([head, chunk]);
-
-			// not enough bytes yet → keep buffering
-			if (head.length < MIN_HEADER_BYTES) return cb();
-			validate(cb);
-		},
-		flush(cb) {
-			// stream ended before we got enough bytes → validate what we have
-			if (state.detected) return cb();
-			validate(cb);
-		},
-	});
-
-	return { stream, state };
 };
 
 const DEFAULT_MIME = "application/octet-stream";
@@ -161,7 +118,6 @@ export {
 	MIN_HEADER_BYTES,
 	DEFAULT_MIME,
 	detectImageType,
-	createImageTypeValidator,
 	mimeFromExtension,
 	isInlineSafe,
 };
