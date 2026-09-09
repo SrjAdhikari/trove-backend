@@ -56,12 +56,6 @@ const PROFILE_PICTURE_PREFIX = "profile-pictures";
 const UPLOAD_URL_TTL_SECONDS = FIVE_MINUTES_SECONDS;
 const DOWNLOAD_URL_TTL_SECONDS = ONE_HOUR_SECONDS;
 const PROFILE_PICTURE_URL_TTL_SECONDS = ONE_HOUR_SECONDS;
-
-// A presigned URL embeds its signing time, so signing afresh on every call
-// yields a new URL each second and the browser cache can never hit it.
-// Quantising the signing time makes the URL stable within a window — at the
-// cost of that much of its lifetime, so the window is capped at a quarter of
-// the TTL to keep a short-lived URL from being born already expired.
 const SIGNING_WINDOW_MS = FIFTEEN_MINUTES_MS;
 
 const quantizedSigningDate = (ttlSeconds) => {
