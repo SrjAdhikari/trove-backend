@@ -1,15 +1,26 @@
 import { deleteObject } from "../../src/lib/r2.js";
 import File from "../../src/models/file.model.js";
+import User from "../../src/models/user.model.js";
 
-/** Deletes the R2 object of every file document still in the database. */
+/** Deletes the R2 object of every file and profile picture still in the database. */
 export const cleanupTestObjects = async () => {
-	const files = await File.find().select("objectKey").lean();
+	const [files, users] = await Promise.all([
+		File.find().select("objectKey").lean(),
+		User.find({ profilePictureKey: { $ne: null } })
+			.select("profilePictureKey")
+			.lean(),
+	]);
+
+	const keys = [
+		...files.map((file) => file.objectKey),
+		...users.map((user) => user.profilePictureKey),
+	];
 
 	await Promise.allSettled(
-		files.map(async (file) => {
+		keys.map(async (key) => {
 			// try/catch, not `.catch()` — `assertKey` throws synchronously.
 			try {
-				await deleteObject(file.objectKey);
+				await deleteObject(key);
 			} catch {}
 		}),
 	);

@@ -101,6 +101,29 @@ describe("r2 object operations", () => {
 		expect(response.headers.get("content-type")).toBe("text/plain");
 	});
 
+	it("presignGet is stable across calls so the browser cache can hit it", async () => {
+		const key = await put(".stable", "cache me");
+
+		const first = await presignGet(key);
+		await new Promise((resolve) => setTimeout(resolve, 1100));
+		const second = await presignGet(key);
+
+		// A per-call signing time would change X-Amz-Date every second, making
+		// the URL a fresh cache key on every response.
+		expect(second).toBe(first);
+		expect((await fetch(second)).status).toBe(200);
+	});
+
+	it("presignGet keeps a short-lived URL usable despite quantising", async () => {
+		const key = await put(".shortttl", "still valid");
+
+		// The signing window is capped at a quarter of the TTL, so a 60s URL
+		// cannot be born already expired.
+		const url = await presignGet(key, { ttl: 60 });
+
+		expect((await fetch(url)).status).toBe(200);
+	});
+
 	it("getObjectMetadata returns size and content type, or null when absent", async () => {
 		const key = await put(".head", "12345", { contentType: "text/plain" });
 

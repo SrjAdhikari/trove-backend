@@ -1,41 +1,131 @@
 //* src/services/user.service.js
 
 import { randomBytes } from "node:crypto";
-import { rm, mkdir, open } from "node:fs/promises";
-import { createWriteStream } from "node:fs";
-import { pipeline } from "node:stream/promises";
 
 import User from "../models/user.model.js";
 import AppError from "../errors/AppError.js";
 
-import createByteCounter from "../utils/byteCounter.js";
 import {
-	createImageTypeValidator,
-	detectImageType,
-	MIN_HEADER_BYTES,
-} from "../utils/mimeType.js";
-import {
-	PROFILE_PICTURES_ROOT,
-	PROFILE_PICTURE_TOKEN_PATTERN,
-	buildProfilePicturePath,
-	buildProfilePictureUrl,
-	parseProfilePictureToken,
-} from "../utils/storagePath.js";
+	buildProfilePictureKey,
+	presignGet,
+	putObject,
+	deleteObject,
+	PROFILE_PICTURE_URL_TTL_SECONDS,
+} from "../lib/r2.js";
+import { detectImageType } from "../utils/mimeType.js";
 
 import envConfig from "../constants/env.js";
 import httpStatus from "../constants/httpStatus.js";
 import appErrorCode from "../constants/appErrorCode.js";
 
-const { NOT_FOUND, BAD_REQUEST, INTERNAL_SERVER_ERROR } = httpStatus;
+const { NOT_FOUND, BAD_REQUEST } = httpStatus;
 const {
 	USER_NOT_FOUND,
 	INVALID_IMAGE_TYPE,
 	IMAGE_TOO_LARGE,
-	INTERNAL_ERROR,
-	PROFILE_PICTURE_NOT_FOUND,
+	UPLOAD_INCOMPLETE,
+	INVALID_INPUT,
 } = appErrorCode;
 
 const { MAX_PROFILE_PICTURE_SIZE } = envConfig;
+
+const PROFILE_PICTURE_CACHE_CONTROL = `private, max-age=${PROFILE_PICTURE_URL_TTL_SECONDS}`;
+const ALLOWED_PROFILE_PICTURE_TYPES = Object.freeze([
+	"image/jpeg",
+	"image/png",
+	"image/webp",
+]);
+
+const removeProfilePictureObject = async (objectKey, userId) => {
+	try {
+		await deleteObject(objectKey);
+	} catch (error) {
+		console.warn(
+			`Failed to remove the profile picture object for user ${userId}: ${error.name} ${error.$metadata?.httpStatusCode ?? ""}`.trim(),
+		);
+	}
+};
+
+const validateProfilePictureHeaders = ({ contentType, contentLength }) => {
+	const declaredType = contentType?.split(";")[0].trim().toLowerCase();
+
+	if (!ALLOWED_PROFILE_PICTURE_TYPES.includes(declaredType)) {
+		throw new AppError(
+			"Unsupported image type. Use JPEG, PNG, or WEBP.",
+			BAD_REQUEST,
+			INVALID_IMAGE_TYPE,
+		);
+	}
+
+	const declaredLength = Number(contentLength);
+
+	if (!Number.isInteger(declaredLength) || declaredLength <= 0) {
+		throw new AppError(
+			"A positive Content-Length is required",
+			BAD_REQUEST,
+			INVALID_INPUT,
+		);
+	}
+
+	if (declaredLength > MAX_PROFILE_PICTURE_SIZE) {
+		throw new AppError(
+			"Profile picture exceeds the size limit",
+			BAD_REQUEST,
+			IMAGE_TOO_LARGE,
+		);
+	}
+
+	return { declaredType, declaredLength };
+};
+
+const detectVerifiedImageType = (buffer, declaredType) => {
+	const detected = detectImageType(buffer);
+
+	if (!detected || detected.mime !== declaredType) {
+		throw new AppError(
+			"Unsupported image type. Use JPEG, PNG, or WEBP.",
+			BAD_REQUEST,
+			INVALID_IMAGE_TYPE,
+		);
+	}
+
+	return detected.mime;
+};
+
+/**
+ * Reads the request body into a Buffer, enforcing the declared Content-Length
+ * and the maximum allowed size. Throws if the body is incomplete or too large.
+ *
+ * @param {import("node:stream").Readable} body - Raw request body.
+ * @param {number} declaredLength - The request's Content-Length.
+ *
+ * @returns {Promise<Buffer>}
+ * @throws {AppError} IMAGE_TOO_LARGE | UPLOAD_INCOMPLETE
+ */
+const readProfilePictureBody = async (body, declaredLength) => {
+	const chunks = [];
+	let size = 0;
+
+	for await (const chunk of body) {
+		size += chunk.length;
+
+		if (size > MAX_PROFILE_PICTURE_SIZE) {
+			throw new AppError(
+				"Profile picture exceeds the size limit",
+				BAD_REQUEST,
+				IMAGE_TOO_LARGE,
+			);
+		}
+
+		chunks.push(chunk);
+	}
+
+	if (size !== declaredLength) {
+		throw new AppError("Upload is incomplete", BAD_REQUEST, UPLOAD_INCOMPLETE);
+	}
+
+	return Buffer.concat(chunks);
+};
 
 /**
  * Updates the authenticated user's display name and returns the user in the
@@ -43,6 +133,7 @@ const { MAX_PROFILE_PICTURE_SIZE } = envConfig;
  *
  * @param {string} userId - The authenticated user's id.
  * @param {string} name - The validated, trimmed new name.
+ *
  * @returns {Promise<Object>} The updated lean user, minus password/otp/otpExpiresAt.
  * @throws {AppError} `USER_NOT_FOUND` if the user no longer exists (rare TOCTOU race).
  */
@@ -64,136 +155,111 @@ const updateProfile = async (userId, name) => {
 
 /**
  * Uploads or replaces the authenticated user's profile picture.
- * Streams the raw body to disk under a random capability token, validating
- * image type (magic bytes) and size mid-stream. On success, points
- * `profilePicture` at the new public URL and deletes the user's previous
- * file if it was one we issued.
  *
  * @param {string} userId - Authenticated user's id.
- * @param {import("node:stream").Readable} fileStream - Raw request body.
+ * @param {import("node:stream").Readable} body - Raw request body.
+ * @param {{contentType?: string, contentLength?: string}} headers - Request headers.
+ *
  * @returns {Promise<Object>} Updated lean user, minus password/otp/otpExpiresAt.
- * @throws {AppError} INVALID_IMAGE_TYPE | IMAGE_TOO_LARGE | USER_NOT_FOUND | INTERNAL_ERROR.
+ * @throws {AppError} INVALID_IMAGE_TYPE | IMAGE_TOO_LARGE | INVALID_INPUT | UPLOAD_INCOMPLETE | USER_NOT_FOUND
  */
-const uploadProfilePicture = async (userId, fileStream) => {
-	const user = await User.findById(userId).select("profilePicture").lean();
+const uploadProfilePicture = async (userId, body, headers = {}) => {
+	const { declaredType, declaredLength } =
+		validateProfilePictureHeaders(headers);
+
+	const buffer = await readProfilePictureBody(body, declaredLength);
+	const detectedType = detectVerifiedImageType(buffer, declaredType);
+
+	const user = await User.findById(userId).select("profilePictureKey").lean();
+
 	if (!user) {
 		throw new AppError("User not found", NOT_FOUND, USER_NOT_FOUND);
 	}
 
-	const token = randomBytes(16).toString("hex");
-	const filePath = buildProfilePicturePath(token);
+	const key = buildProfilePictureKey(
+		userId.toString(),
+		randomBytes(16).toString("hex"),
+	);
 
-	const typeValidator = createImageTypeValidator();
-	const counter = createByteCounter(MAX_PROFILE_PICTURE_SIZE);
+	await putObject(key, buffer, {
+		contentType: detectedType,
+		cacheControl: PROFILE_PICTURE_CACHE_CONTROL,
+	});
 
-	await mkdir(PROFILE_PICTURES_ROOT, { recursive: true });
+	let updatedUser;
 
 	try {
-		await pipeline(
-			fileStream,
-			typeValidator.stream,
-			counter.stream,
-			createWriteStream(filePath),
-		);
-	} catch {
-		await rm(filePath, { force: true });
+		updatedUser = await User.findByIdAndUpdate(
+			userId,
+			{ profilePictureKey: key },
+			{ new: true, runValidators: true },
+		)
+			.select("-password -otp -otpExpiresAt")
+			.lean();
 
-		if (typeValidator.state.rejected) {
-			throw new AppError(
-				"Unsupported image type. Use JPEG, PNG, or WEBP.",
-				BAD_REQUEST,
-				INVALID_IMAGE_TYPE,
-			);
+		if (!updatedUser) {
+			throw new AppError("User not found", NOT_FOUND, USER_NOT_FOUND);
 		}
-		if (counter.state.tripped) {
-			throw new AppError(
-				"Profile picture exceeds the size limit",
-				BAD_REQUEST,
-				IMAGE_TOO_LARGE,
-			);
-		}
-		throw new AppError(
-			"Failed to upload profile picture",
-			INTERNAL_SERVER_ERROR,
-			INTERNAL_ERROR,
-		);
+	} catch (error) {
+		await removeProfilePictureObject(key, userId);
+		throw error;
 	}
 
-	const updatedUser = await User.findByIdAndUpdate(
-		userId,
-		{ profilePicture: buildProfilePictureUrl(token) },
-		{ new: true, runValidators: true },
-	)
-		.select("-password -otp -otpExpiresAt")
-		.lean();
-
-	// Rare TOCTOU: user vanished mid-upload. Roll back the orphaned file.
-	if (!updatedUser) {
-		await rm(filePath, { force: true });
-		throw new AppError("User not found", NOT_FOUND, USER_NOT_FOUND);
-	}
-
-	// Clean up the old file if we issued it.
-	const oldToken = parseProfilePictureToken(user.profilePicture);
-	if (oldToken && oldToken !== token) {
-		await rm(buildProfilePicturePath(oldToken), { force: true });
+	// Remove the old profile picture object if it exists and is different from the new one
+	if (user.profilePictureKey && user.profilePictureKey !== key) {
+		await removeProfilePictureObject(user.profilePictureKey, userId);
 	}
 
 	return updatedUser;
 };
 
 /**
- * Resolves a profile picture for serving: validates the token shape,
- * confirms the file exists, and sniffs its MIME from the header.
+ * Resolves a user's profile picture URL, either by presigning the R2 object
+ * or returning the existing `profilePicture` field if present.
  *
- * @param {string} token - Capability token from the URL.
- * @returns {Promise<{ filePath: string, mime: string }>}
- * @throws {AppError} PROFILE_PICTURE_NOT_FOUND for bad tokens or missing files.
+ * @param {{profilePictureKey?: string, profilePicture?: string}|null} user
+ * @returns {Promise<string|null>}
  */
-const getProfilePicture = async (token) => {
-	if (!PROFILE_PICTURE_TOKEN_PATTERN.test(token)) {
-		throw new AppError(
-			"Profile picture not found",
-			NOT_FOUND,
-			PROFILE_PICTURE_NOT_FOUND,
-		);
-	}
+const resolveProfilePictureUrl = async (user) => {
+	const { profilePictureKey, profilePicture } = user ?? {};
 
-	const filePath = buildProfilePicturePath(token);
-
-	// Validate the file exists before trying to sniff its MIME.
-	let fileHandle;
-	try {
-		fileHandle = await open(filePath, "r");
-	} catch (err) {
-		if (err.code === "ENOENT") {
-			throw new AppError(
-				"Profile picture not found",
-				NOT_FOUND,
-				PROFILE_PICTURE_NOT_FOUND,
+	if (profilePictureKey) {
+		try {
+			return await presignGet(profilePictureKey, {
+				inline: true,
+				ttl: PROFILE_PICTURE_URL_TTL_SECONDS,
+			});
+		} catch (error) {
+			console.warn(
+				`Unsignable profile picture key for user ${user._id}: ${error.message}`,
 			);
+
+			return null;
 		}
-
-		// unexpected fs error → global handler logs + masks as 500
-		throw err;
 	}
 
-	// Sniff MIME type from the header, defaulting to application/octet-stream.
-	let mime = "application/octet-stream";
-	try {
-		const { buffer } = await fileHandle.read(
-			Buffer.alloc(MIN_HEADER_BYTES),
-			0,
-			MIN_HEADER_BYTES,
-			0,
-		);
-		const detected = detectImageType(buffer);
-		if (detected) mime = detected.mime;
-	} finally {
-		await fileHandle.close();
-	}
-
-	return { filePath, mime };
+	return profilePicture ?? null;
 };
 
-export { updateProfile, uploadProfilePicture, getProfilePicture };
+/**
+ * Formats a lean user document for API responses, excluding sensitive fields
+ * and resolving the profile picture URL if applicable.
+ *
+ * @param {Object|null} user - A lean user document.
+ * @returns {Promise<Object|null>}
+ */
+const formatUser = async (user) => {
+	if (!user) return user;
+
+	const { profilePictureKey, ...safeUser } = user;
+	const profilePictureUrl = await resolveProfilePictureUrl(user);
+
+	return { ...safeUser, profilePictureUrl };
+};
+
+export {
+	updateProfile,
+	uploadProfilePicture,
+	resolveProfilePictureUrl,
+	formatUser,
+};

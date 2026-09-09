@@ -16,6 +16,8 @@ import {
 	logoutAllUser,
 } from "../services/auth.service.js";
 
+import { formatUser } from "../services/user.service.js";
+
 import { setAuthCookie, clearAuthCookie } from "../utils/cookies.js";
 import buildDeviceInfo from "../utils/deviceInfo.js";
 
@@ -149,10 +151,12 @@ const githubOAuthHandler = async (req, res) => {
 };
 
 const getCurrentUserHandler = async (req, res) => {
+	const user = req.user.toObject?.() ?? req.user;
+
 	res.status(OK).json({
 		success: true,
 		message: "User fetched successfully",
-		data: req.user,
+		data: await formatUser(user),
 	});
 };
 

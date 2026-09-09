@@ -12,6 +12,7 @@ import {
 	hardDeleteUser,
 	restoreUser,
 } from "../../services/admin/user.service.js";
+import { formatUser } from "../../services/user.service.js";
 
 const { OK } = httpStatus;
 
@@ -61,19 +62,22 @@ const listUsersHandler = async (req, res) => {
 	res.status(OK).json({
 		success: true,
 		message: "Users fetched successfully",
-		data: result,
+		data: {
+			...result,
+			items: await Promise.all(result.items.map(formatUser)),
+		},
 	});
 };
 
 const getUserByIdHandler = async (req, res) => {
 	const { id } = req.params;
 
-	const data = await getUserById(id);
+	const user = await getUserById(id);
 
 	res.status(OK).json({
 		success: true,
 		message: "User fetched successfully",
-		data,
+		data: await formatUser(user),
 	});
 };
 
@@ -87,7 +91,7 @@ const changeUserRoleHandler = async (req, res) => {
 	res.status(OK).json({
 		success: true,
 		message: "User role updated successfully",
-		data: updatedUser,
+		data: await formatUser(updatedUser),
 	});
 };
 
@@ -100,7 +104,7 @@ const suspendUserHandler = async (req, res) => {
 	res.status(OK).json({
 		success: true,
 		message: "User suspended successfully",
-		data: suspendedUser,
+		data: await formatUser(suspendedUser),
 	});
 };
 
@@ -113,7 +117,7 @@ const unsuspendUserHandler = async (req, res) => {
 	res.status(OK).json({
 		success: true,
 		message: "User unsuspended successfully",
-		data: unsuspendedUser,
+		data: await formatUser(unsuspendedUser),
 	});
 };
 
@@ -139,7 +143,7 @@ const softDeleteUserHandler = async (req, res) => {
 	res.status(OK).json({
 		success: true,
 		message: "User soft-deleted successfully",
-		data: deletedUser,
+		data: await formatUser(deletedUser),
 	});
 };
 
@@ -165,7 +169,7 @@ const restoreUserHandler = async (req, res) => {
 	res.status(OK).json({
 		success: true,
 		message: "User restored successfully",
-		data: restoredUser,
+		data: await formatUser(restoredUser),
 	});
 };
 
